@@ -25,7 +25,7 @@ class DinglinApp extends StatefulWidget {
   State<DinglinApp> createState() => _DinglinAppState();
 }
 
-class _DinglinAppState extends State<DinglinApp> {
+class _DinglinAppState extends State<DinglinApp> with WidgetsBindingObserver {
   late final AppStore _store;
   late final bool _ownsStore;
   final FocusNode _searchFocus = FocusNode();
@@ -33,6 +33,7 @@ class _DinglinAppState extends State<DinglinApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ownsStore = widget.store == null;
     _store = widget.store ?? AppStore();
     if (_ownsStore) {
@@ -42,7 +43,15 @@ class _DinglinAppState extends State<DinglinApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _store.onAppResumed();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchFocus.dispose();
     if (_ownsStore) _store.dispose();
     super.dispose();

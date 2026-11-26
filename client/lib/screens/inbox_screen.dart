@@ -20,28 +20,106 @@ class InboxScreen extends StatefulWidget {
   State<InboxScreen> createState() => _InboxScreenState();
 }
 
-class _InboxScreenState extends State<InboxScreen> {
+class _InboxScreenState extends State<InboxScreen>
+    with SingleTickerProviderStateMixin {
   late final TextEditingController _searchCtrl;
   late final FocusNode _focusNode;
+  late final AnimationController _spinCtrl;
   bool _ownsFocusNode = false;
+  bool _mobileSearchExpanded = false;
 
   @override
   void initState() {
     super.initState();
     _searchCtrl = TextEditingController(text: widget.store.searchQuery);
+    _spinCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
     if (widget.searchFocusNode != null) {
       _focusNode = widget.searchFocusNode!;
     } else {
       _focusNode = FocusNode();
       _ownsFocusNode = true;
     }
+    _syncSpinner();
+  }
+
+  @override
+  void didUpdateWidget(covariant InboxScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncSpinner();
+  }
+
+  void _syncSpinner() {
+    if (widget.store.isLoading) {
+      if (!_spinCtrl.isAnimating) _spinCtrl.repeat();
+    } else {
+      if (_spinCtrl.isAnimating) {
+        _spinCtrl.stop();
+        _spinCtrl.value = 0;
+      }
+    }
   }
 
   @override
   void dispose() {
+    _spinCtrl.dispose();
     _searchCtrl.dispose();
     if (_ownsFocusNode) _focusNode.dispose();
     super.dispose();
+  }
+
+  Widget _buildSearchField(AppleTokens t, AppStore store, {bool autoFocus = false}) {
+    return SizedBox(
+      height: 32,
+      child: TextField(
+        controller: _searchCtrl,
+        focusNode: _focusNode,
+        autofocus: autoFocus,
+        onChanged: (v) {
+          store.setSearchQuery(v);
+          setState(() {});
+        },
+        style: TextStyle(fontSize: 13, color: t.inkPrimary),
+        decoration: appleInputDecoration(
+          t,
+          hint: '搜索',
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+          prefixIcon: Padding(
+            padding: const EdgeInsets.only(left: 10, right: 6),
+            child: AppIcon(
+              AppIconName.search,
+              size: 14,
+              color: t.inkTertiary,
+              semanticsLabel: '搜索',
+            ),
+          ),
+          prefixIconConstraints:
+              const BoxConstraints(minWidth: 30, minHeight: 32),
+          suffixIcon: _searchCtrl.text.isNotEmpty
+              ? GestureDetector(
+                  onTap: () {
+                    _searchCtrl.clear();
+                    store.setSearchQuery('');
+                    setState(() {});
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: AppIcon(
+                      AppIconName.xCircle,
+                      size: 14,
+                      color: t.inkTertiary,
+                      semanticsLabel: '清除搜索',
+                    ),
+                  ),
+                )
+              : null,
+          suffixIconConstraints:
+              const BoxConstraints(minWidth: 26, minHeight: 32),
+        ),
+      ),
+    );
   }
 
   @override
@@ -49,83 +127,69 @@ class _InboxScreenState extends State<InboxScreen> {
     final t = AppleTokens.of(context);
     final store = widget.store;
     final selectedSource = store.sourceById(store.selectedSourceId);
+    final isWide = MediaQuery.sizeOf(context).width >= 640;
+    _syncSpinner();
 
     return Column(
       children: [
-        // Frosted Top Bar (search input stays mounted across list rebuilds)
-        FrostedSurface(
-          color: t.bgTopbar,
-          border: Border(bottom: BorderSide(color: t.borderHairline)),
-          child: SizedBox(
-            height: AppleTokens.topbarHeight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Text(
-                    selectedSource?.name ?? '通知',
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.3,
-                      color: t.inkPrimary,
+        AppleTopBar(
+          title: selectedSource?.name ?? '通知',
+          expandedContent: !isWide && _mobileSearchExpanded
+              ? Row(
+                  children: [
+                    Expanded(
+                      child: _buildSearchField(t, store, autoFocus: true),
                     ),
-                  ),
-                  const Spacer(),
-                  SizedBox(
-                    width: 220,
-                    height: 32,
-                    child: TextField(
-                      controller: _searchCtrl,
-                      focusNode: _focusNode,
-                      onChanged: store.setSearchQuery,
-                      style: TextStyle(fontSize: 13, color: t.inkPrimary),
-                      decoration: InputDecoration(
-                        hintText: '搜索',
-                        hintStyle: TextStyle(fontSize: 13, color: t.inkTertiary),
-                        prefixIcon: Padding(
-                          padding: const EdgeInsets.only(left: 10, right: 6),
-                          child: AppIcon(
-                            AppIconName.search,
-                            size: 14,
-                            color: t.inkTertiary,
-                            semanticsLabel: '搜索',
-                          ),
-                        ),
-                        prefixIconConstraints:
-                            const BoxConstraints(minWidth: 30, minHeight: 32),
-                        filled: true,
-                        fillColor: t.bgSurfaceSecondary,
-                        contentPadding:
-                            const EdgeInsets.symmetric(horizontal: 10),
-                        border: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(AppleTokens.radiusSm),
-                          borderSide: BorderSide(color: t.borderHairline),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(AppleTokens.radiusSm),
-                          borderSide: BorderSide(color: t.borderHairline),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(AppleTokens.radiusSm),
-                          borderSide: BorderSide(color: t.accent),
-                        ),
-                      ),
+                    const SizedBox(width: 8),
+                    AppleIconButton(
+                      icon: AppIconName.close,
+                      tooltip: '收起搜索',
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        store.setSearchQuery('');
+                        setState(() => _mobileSearchExpanded = false);
+                      },
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  AppleIconButton(
-                    icon: AppIconName.refresh,
-                    tooltip: '刷新',
-                    onPressed: store.refreshAll,
-                  ),
-                ],
+                  ],
+                )
+              : null,
+          trailing: [
+            if (isWide) ...[
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 230),
+                  child: _buildSearchField(t, store),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ] else ...[
+              AppleIconButton(
+                icon: AppIconName.search,
+                tooltip: '搜索',
+                active: store.searchQuery.isNotEmpty,
+                onPressed: () {
+                  setState(() => _mobileSearchExpanded = true);
+                },
+              ),
+              const SizedBox(width: 4),
+            ],
+            AppleIconButton(
+              icon: AppIconName.checkDouble,
+              tooltip: '全部已读',
+              onPressed: store.unreadCount > 0
+                  ? () => store.markAllRead(sourceId: store.selectedSourceId)
+                  : null,
+            ),
+            const SizedBox(width: 4),
+            RotationTransition(
+              turns: _spinCtrl,
+              child: AppleIconButton(
+                icon: AppIconName.refresh,
+                tooltip: '刷新',
+                onPressed: store.refreshAll,
               ),
             ),
-          ),
+          ],
         ),
         Expanded(
           child: ListView(
@@ -144,14 +208,16 @@ class _InboxScreenState extends State<InboxScreen> {
                         ),
                       Row(
                         children: [
-                          AppleSegmentedControl<InboxFilter>(
-                            value: store.inboxFilter,
-                            options: const [
-                              (value: InboxFilter.all, label: '全部'),
-                              (value: InboxFilter.unread, label: '未读'),
-                              (value: InboxFilter.critical, label: '强提醒'),
-                            ],
-                            onChanged: store.setInboxFilter,
+                          Flexible(
+                            child: AppleSegmentedControl<InboxFilter>(
+                              value: store.inboxFilter,
+                              options: const [
+                                (value: InboxFilter.all, label: '全部'),
+                                (value: InboxFilter.unread, label: '未读'),
+                                (value: InboxFilter.critical, label: '强提醒'),
+                              ],
+                              onChanged: store.setInboxFilter,
+                            ),
                           ),
                           const Spacer(),
                           if (store.selectedSourceId != null)
@@ -162,6 +228,11 @@ class _InboxScreenState extends State<InboxScreen> {
                             ),
                         ],
                       ),
+                      if (MediaQuery.sizeOf(context).width < 960 &&
+                          store.sources.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        _CompactSourceFilterBar(store: store),
+                      ],
                       const SizedBox(height: 16),
                       if (store.isLoading && store.notifications.isEmpty)
                         const _InboxSkeleton()
@@ -373,12 +444,16 @@ class _NotificationRowState extends State<_NotificationRow> {
                                     ),
                                   ),
                                   const SizedBox(width: 5),
-                                  Text(
-                                    src.name,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                      color: t.inkPrimary,
+                                  Flexible(
+                                    child: Text(
+                                      src.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: t.inkPrimary,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 8),
@@ -395,6 +470,16 @@ class _NotificationRowState extends State<_NotificationRow> {
                                     background: t.bgSurfaceSecondary,
                                     foreground: t.inkSecondary,
                                   ),
+                                if (n.status == 'snoozed' &&
+                                    n.snoozedUntil != null) ...[
+                                  const SizedBox(width: 6),
+                                  ApplePill(
+                                    label:
+                                        '延后至 ${formatClockHm(n.snoozedUntil!)}',
+                                    background: t.warningBg,
+                                    foreground: t.warning,
+                                  ),
+                                ],
                                 const Spacer(),
                                 Text(
                                   formatRelativeTime(n.createdAt),
@@ -606,6 +691,115 @@ class _EmptyState extends StatelessWidget {
           const SizedBox(height: 14),
           AppleActionChip(label: actionLabel, onPressed: onAction),
         ],
+      ),
+    );
+  }
+}
+
+class _CompactSourceFilterBar extends StatelessWidget {
+  const _CompactSourceFilterBar({required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppleTokens.of(context);
+    return SizedBox(
+      height: 30,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _SourceFilterChip(
+            label: '全部来源',
+            selected: store.selectedSourceId == null,
+            badge: store.unreadCount,
+            onTap: () => store.setSelectedSource(null),
+          ),
+          for (final src in store.sources) ...[
+            const SizedBox(width: 6),
+            _SourceFilterChip(
+              label: src.name,
+              dotColor: parseHexColor(src.color, fallback: t.accent),
+              selected: store.selectedSourceId == src.id,
+              badge: store.unreadCountForSource(src.id),
+              onTap: () => store.setSelectedSource(
+                store.selectedSourceId == src.id ? null : src.id,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SourceFilterChip extends StatelessWidget {
+  const _SourceFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.dotColor,
+    this.badge = 0,
+  });
+
+  final String label;
+  final Color? dotColor;
+  final bool selected;
+  final int badge;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppleTokens.of(context);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: AppleTokens.motion,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: selected ? t.bgSelected : t.bgSurface,
+            borderRadius: BorderRadius.circular(AppleTokens.radiusPill),
+            border: Border.all(
+              color: selected ? t.accent : t.borderHairline,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (dotColor != null) ...[
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: dotColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? t.accent : t.inkSecondary,
+                ),
+              ),
+              if (badge > 0) ...[
+                const SizedBox(width: 5),
+                Text(
+                  '$badge',
+                  style: AppleTokens.tabular.copyWith(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: selected ? t.accent : t.inkTertiary,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

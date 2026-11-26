@@ -33,6 +33,7 @@ class AlarmFullScreenActivity : Activity() {
         }
 
         val scheduleId = intent.getStringExtra("schedule_id") ?: ""
+        val entityType = intent.getStringExtra("entity_type") ?: "schedule"
         val title = intent.getStringExtra("title") ?: "Dinglin 闹钟"
         val body = intent.getStringExtra("body") ?: ""
         val snoozeMins = intent.getIntExtra("snooze_minutes", 10)
@@ -62,7 +63,7 @@ class AlarmFullScreenActivity : Activity() {
             text = "贪睡 $snoozeMins 分钟"
             setOnClickListener {
                 stopService(Intent(this@AlarmFullScreenActivity, AlarmRingService::class.java))
-                reportActionAsync(scheduleId, "snooze", snoozeMins)
+                reportActionAsync(scheduleId, entityType, "snooze", snoozeMins)
                 finish()
             }
         }
@@ -71,7 +72,7 @@ class AlarmFullScreenActivity : Activity() {
             text = "关闭"
             setOnClickListener {
                 stopService(Intent(this@AlarmFullScreenActivity, AlarmRingService::class.java))
-                reportActionAsync(scheduleId, "dismiss", 0)
+                reportActionAsync(scheduleId, entityType, "dismiss", 0)
                 finish()
             }
         }
@@ -83,22 +84,39 @@ class AlarmFullScreenActivity : Activity() {
         setContentView(root)
     }
 
-    private fun reportActionAsync(scheduleId: String, action: String, snoozeMinutes: Int) {
-        if (scheduleId.isEmpty()) return
+    private fun reportActionAsync(
+        entityId: String,
+        entityType: String,
+        action: String,
+        snoozeMinutes: Int,
+    ) {
+        if (entityId.isEmpty()) return
         val baseUrl = ScheduleStore.serverUrl(this)
         val token = ScheduleStore.authToken(this)
         if (baseUrl.isEmpty() || token.isEmpty()) return
         thread(name = "dinglin-lockscreen-report") {
-            val payload = if (action == "snooze") {
-                JSONObject().put("minutes", snoozeMinutes).toString()
+            if (entityType == "notification") {
+                val payload = JSONObject().put("action_id", action)
+                if (action == "snooze") {
+                    payload.put("snooze_minutes", snoozeMinutes)
+                }
+                AlarmTriggerReceiver.postJson(
+                    "$baseUrl/api/v1/notifications/$entityId/receipt",
+                    token,
+                    payload.toString()
+                )
             } else {
-                "{}"
+                val payload = if (action == "snooze") {
+                    JSONObject().put("minutes", snoozeMinutes).toString()
+                } else {
+                    "{}"
+                }
+                AlarmTriggerReceiver.postJson(
+                    "$baseUrl/api/v1/schedules/$entityId/$action",
+                    token,
+                    payload
+                )
             }
-            AlarmTriggerReceiver.postJson(
-                "$baseUrl/api/v1/schedules/$scheduleId/$action",
-                token,
-                payload
-            )
         }
     }
 }

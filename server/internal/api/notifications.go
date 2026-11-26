@@ -25,6 +25,9 @@ func (s *Server) RegisterNotificationRoutes(notifySvc *notify.Service) {
 		mux.Handle("GET /api/v1/notifications", s.auth.RequireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			s.handleListNotifications(w, r, notifySvc)
 		})))
+		mux.Handle("POST /api/v1/notifications/read-all", s.auth.RequireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.handleMarkAllRead(w, r, notifySvc)
+		})))
 	})
 }
 
@@ -183,6 +186,22 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"notifications": list})
+}
+
+func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request, notifySvc *notify.Service) {
+	var req struct {
+		SourceID string `json:"source_id"`
+	}
+	if err := DecodeJSON(r, &req); err != nil && err.Error() != "empty request body" {
+		WriteError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	count, err := notifySvc.MarkAllRead(r.Context(), req.SourceID)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"updated": count})
 }
 
 func firstString(m map[string]any, keys ...string) string {

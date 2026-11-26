@@ -202,6 +202,10 @@ func ValidPlatform(v string) bool {
 	return v == PlatformAndroid || v == PlatformWeb
 }
 
+func ValidPushMode(v string) bool {
+	return v == PushModeFCM || v == PushModeWS || v == PushModeWeb
+}
+
 func ValidPriority(v string) bool {
 	return v == PrioritySilent || v == PriorityNormal || v == PriorityCritical
 }

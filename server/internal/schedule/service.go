@@ -43,6 +43,7 @@ type UpdateInput struct {
 	Title         *string
 	Body          *string
 	Priority      *string
+	ScheduleType  *string
 	FireAt        *time.Time
 	CronExpr      *string
 	Timezone      *string
@@ -258,6 +259,24 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain
 		}
 		sched.Priority = *in.Priority
 	}
+	if in.ScheduleType != nil {
+		st := strings.ToLower(strings.TrimSpace(*in.ScheduleType))
+		if sched.Kind == domain.ScheduleKindCountdown || sched.ScheduleType == domain.ScheduleTypeDuration {
+			if st != domain.ScheduleTypeDuration {
+				return domain.Schedule{}, fmt.Errorf("%w: countdown schedule_type cannot be changed", ErrValidation)
+			}
+		} else {
+			if st != domain.ScheduleTypeOnce && st != domain.ScheduleTypeCron {
+				return domain.Schedule{}, fmt.Errorf("%w: schedule_type must be once or cron", ErrValidation)
+			}
+			sched.ScheduleType = st
+			if st == domain.ScheduleTypeOnce {
+				sched.CronExpr = ""
+			} else {
+				sched.FireAt = nil
+			}
+		}
+	}
 	if in.FireAt != nil {
 		t := in.FireAt.UTC()
 		sched.FireAt = &t
@@ -288,9 +307,13 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain
 	}
 	if in.Enabled != nil {
 		sched.Enabled = *in.Enabled
-		if sched.Enabled && sched.State == domain.ScheduleStateCompleted {
-			sched.State = domain.ScheduleStateActive
-		}
+	} else if sched.State == domain.ScheduleStateCompleted &&
+		((in.ScheduleType != nil && sched.ScheduleType == domain.ScheduleTypeCron) ||
+			(in.FireAt != nil && in.FireAt.After(time.Now().UTC()))) {
+		sched.Enabled = true
+	}
+	if sched.Enabled && sched.State == domain.ScheduleStateCompleted {
+		sched.State = domain.ScheduleStateActive
 	}
 
 	now := time.Now().UTC()
@@ -596,11 +619,11 @@ func (s *Service) persistUpdate(ctx context.Context, sched domain.Schedule, now 
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE schedules SET
-			title = ?, body = ?, priority = ?, fire_at = ?, cron_expr = ?, timezone = ?,
+			title = ?, body = ?, priority = ?, schedule_type = ?, fire_at = ?, cron_expr = ?, timezone = ?,
 			duration_sec = ?, target_at = ?, remaining_sec = ?, state = ?, snooze_minutes = ?,
 			sound_profile = ?, vibrate = ?, enabled = ?, next_fire_at = ?, version = ?, updated_at = ?
 		WHERE id = ? AND deleted_at IS NULL`,
-		sched.Title, sched.Body, sched.Priority, store.NullableUnix(sched.FireAt), sched.CronExpr, sched.Timezone,
+		sched.Title, sched.Body, sched.Priority, sched.ScheduleType, store.NullableUnix(sched.FireAt), sched.CronExpr, sched.Timezone,
 		sched.DurationSec, store.NullableUnix(sched.TargetAt), sched.RemainingSec, sched.State, sched.SnoozeMinutes,
 		sched.SoundProfile, store.BoolToInt(sched.Vibrate), store.BoolToInt(sched.Enabled),
 		store.NullableUnix(sched.NextFireAt), sched.Version, now.Unix(), sched.ID,

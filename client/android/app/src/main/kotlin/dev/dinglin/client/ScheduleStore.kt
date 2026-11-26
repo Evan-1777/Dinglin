@@ -3,6 +3,7 @@ package dev.dinglin.client
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Calendar
 
 data class LocalSchedule(
     val id: String,
@@ -23,6 +24,12 @@ object ScheduleStore {
     private const val KEY_AUTH_TOKEN = "auth_token"
     private const val KEY_DEVICE_ID = "device_id"
     private const val KEY_SCHEDULES = "schedules_json"
+    private const val KEY_KEEPALIVE_MODE = "keepalive_mode"
+    private const val KEY_KEEPALIVE_INTERVAL = "keepalive_interval_min"
+    private const val KEY_LAST_SEQ = "last_seq"
+    private const val KEY_DND_ENABLED = "dnd_enabled"
+    private const val KEY_DND_START = "dnd_start"
+    private const val KEY_DND_END = "dnd_end"
 
     fun saveConfig(context: Context, serverUrl: String, authToken: String, deviceId: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -89,5 +96,69 @@ object ScheduleStore {
         } catch (_: Exception) {
         }
         return out
+    }
+
+    fun saveKeepAlive(context: Context, mode: String, intervalMin: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_KEEPALIVE_MODE, mode)
+            .putInt(KEY_KEEPALIVE_INTERVAL, intervalMin.coerceAtLeast(5))
+            .apply()
+    }
+
+    fun keepAliveMode(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_KEEPALIVE_MODE, "auto") ?: "auto"
+
+    fun keepAliveIntervalMin(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_KEEPALIVE_INTERVAL, 5).coerceAtLeast(5)
+
+    fun lastSeq(context: Context): Long =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_SEQ, 0L)
+
+    fun saveLastSeq(context: Context, seq: Long) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (seq > prefs.getLong(KEY_LAST_SEQ, 0L)) {
+            prefs.edit().putLong(KEY_LAST_SEQ, seq).apply()
+        }
+    }
+
+    fun resetLastSeq(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putLong(KEY_LAST_SEQ, 0L)
+            .apply()
+    }
+
+    fun saveDndPolicy(context: Context, enabled: Boolean, start: String, end: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_DND_ENABLED, enabled)
+            .putString(KEY_DND_START, start)
+            .putString(KEY_DND_END, end)
+            .apply()
+    }
+
+    fun isWithinDnd(context: Context, now: Calendar = Calendar.getInstance()): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_DND_ENABLED, false)) return false
+        val startMin = parseHhMm(prefs.getString(KEY_DND_START, "23:00")) ?: return false
+        val endMin = parseHhMm(prefs.getString(KEY_DND_END, "07:00")) ?: return false
+        if (startMin == endMin) return false
+        val curMin = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+        return if (startMin < endMin) {
+            curMin in startMin until endMin
+        } else {
+            curMin >= startMin || curMin < endMin
+        }
+    }
+
+    private fun parseHhMm(raw: String?): Int? {
+        if (raw == null) return null
+        val parts = raw.trim().split(':')
+        if (parts.size != 2) return null
+        val h = parts[0].toIntOrNull() ?: return null
+        val m = parts[1].toIntOrNull() ?: return null
+        if (h !in 0..23 || m !in 0..59) return null
+        return h * 60 + m
     }
 }

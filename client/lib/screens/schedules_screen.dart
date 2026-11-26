@@ -57,35 +57,16 @@ class _SchedulesScreenState extends State<SchedulesScreen> {
 
     return Column(
       children: [
-        FrostedSurface(
-          color: t.bgTopbar,
-          border: Border(bottom: BorderSide(color: t.borderHairline)),
-          child: SizedBox(
-            height: AppleTokens.topbarHeight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Text(
-                    '调度',
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.3,
-                      color: t.inkPrimary,
-                    ),
-                  ),
-                  const Spacer(),
-                  AppleIconButton(
-                    icon: AppIconName.plus,
-                    tooltip: '新建调度',
-                    primary: true,
-                    onPressed: () => _openEditor(),
-                  ),
-                ],
-              ),
+        AppleTopBar(
+          title: '调度',
+          trailing: [
+            AppleIconButton(
+              icon: AppIconName.plus,
+              tooltip: '新建调度',
+              primary: true,
+              onPressed: () => _openEditor(),
             ),
-          ),
+          ],
         ),
         Expanded(
           child: ListView(
@@ -99,15 +80,18 @@ class _SchedulesScreenState extends State<SchedulesScreen> {
                     children: [
                       Align(
                         alignment: Alignment.centerLeft,
-                        child: AppleSegmentedControl<String>(
-                          value: store.scheduleKindFilter,
-                          options: const [
-                            (value: 'all', label: '全部'),
-                            (value: 'scheduled_notification', label: '定时通知'),
-                            (value: 'alarm', label: '闹钟'),
-                            (value: 'countdown', label: '倒计时'),
-                          ],
-                          onChanged: store.setScheduleKindFilter,
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: AppleSegmentedControl<String>(
+                            value: store.scheduleKindFilter,
+                            options: const [
+                              (value: 'all', label: '全部'),
+                              (value: 'scheduled_notification', label: '定时通知'),
+                              (value: 'alarm', label: '闹钟'),
+                              (value: 'countdown', label: '倒计时'),
+                            ],
+                            onChanged: store.setScheduleKindFilter,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -307,6 +291,19 @@ class _ScheduleCard extends StatelessWidget {
                     background: t.successBg,
                     foreground: t.success,
                   ),
+                  if (schedule.nextFireAt != null) ...[
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '下次 · ${formatFutureTime(schedule.nextFireAt!, now: now)}',
+                        overflow: TextOverflow.ellipsis,
+                        style: AppleTokens.tabular.copyWith(
+                          fontSize: 12,
+                          color: t.inkTertiary,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -372,7 +369,21 @@ class _ScheduleCard extends StatelessWidget {
                   icon: AppIconName.trash,
                   tooltip: '删除',
                   danger: true,
-                  onPressed: () => store.deleteSchedule(schedule.id),
+                  onPressed: () async {
+                    final ok = await showAppleConfirmDialog(
+                      context,
+                      title: '删除调度',
+                      message: '确认删除「${schedule.title}」？此操作不可撤销。',
+                      confirmLabel: '删除',
+                    );
+                    if (ok) {
+                      try {
+                        await store.deleteSchedule(schedule.id);
+                      } catch (e) {
+                        store.showToast(e.toString());
+                      }
+                    }
+                  },
                 ),
               ],
             ),

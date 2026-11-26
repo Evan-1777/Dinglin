@@ -34,6 +34,220 @@ class FrostedSurface extends StatelessWidget {
   }
 }
 
+class AppleTopBar extends StatelessWidget {
+  const AppleTopBar({
+    super.key,
+    required this.title,
+    this.trailing = const [],
+    this.expandedContent,
+    this.horizontalPadding = 20,
+  });
+
+  final String title;
+  final List<Widget> trailing;
+  final Widget? expandedContent;
+  final double horizontalPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppleTokens.of(context);
+    return FrostedSurface(
+      color: t.bgTopbar,
+      border: Border(bottom: BorderSide(color: t.borderHairline)),
+      child: SafeArea(
+        bottom: false,
+        left: false,
+        right: false,
+        child: SizedBox(
+          height: AppleTokens.topbarHeight,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+            child: expandedContent ??
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.3,
+                          color: t.inkPrimary,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    ...trailing,
+                  ],
+                ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shared Apple-styled input field decoration across forms and search inputs.
+InputDecoration appleInputDecoration(
+  AppleTokens t, {
+  String? hint,
+  Widget? prefixIcon,
+  Widget? suffixIcon,
+  BoxConstraints? prefixIconConstraints,
+  BoxConstraints? suffixIconConstraints,
+  EdgeInsetsGeometry? contentPadding,
+}) {
+  final border = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(AppleTokens.radiusSm),
+    borderSide: BorderSide(color: t.borderHairline),
+  );
+  return InputDecoration(
+    hintText: hint,
+    hintStyle: TextStyle(fontSize: 13, color: t.inkTertiary),
+    prefixIcon: prefixIcon,
+    suffixIcon: suffixIcon,
+    prefixIconConstraints: prefixIconConstraints,
+    suffixIconConstraints: suffixIconConstraints,
+    filled: true,
+    fillColor: t.bgSurfaceSecondary,
+    isDense: true,
+    contentPadding: contentPadding ??
+        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    border: border,
+    enabledBorder: border,
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppleTokens.radiusSm),
+      borderSide: BorderSide(color: t.accent),
+    ),
+  );
+}
+
+/// Unified Apple HIG dialog container with hairline border and mobile-safe inset.
+class AppleDialogShell extends StatelessWidget {
+  const AppleDialogShell({
+    super.key,
+    required this.child,
+    this.title,
+    this.maxWidth = 440,
+    this.padding = const EdgeInsets.all(20),
+    this.showClose = false,
+  });
+
+  final Widget child;
+  final String? title;
+  final double maxWidth;
+  final EdgeInsetsGeometry padding;
+  final bool showClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppleTokens.of(context);
+    return Dialog(
+      backgroundColor: t.bgSurface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppleTokens.radiusLg),
+        side: BorderSide(color: t.borderHairline),
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: SingleChildScrollView(
+          padding: padding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (title != null || showClose) ...[
+                Row(
+                  children: [
+                    if (title != null)
+                      Expanded(
+                        child: Text(
+                          title!,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: t.inkPrimary,
+                          ),
+                        ),
+                      )
+                    else
+                      const Spacer(),
+                    if (showClose)
+                      AppleIconButton(
+                        icon: AppIconName.close,
+                        tooltip: '关闭',
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+              ],
+              child,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<bool> showAppleConfirmDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+  String confirmLabel = '确认',
+  String cancelLabel = '取消',
+  bool danger = true,
+}) async {
+  final res = await showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      final t = AppleTokens.of(ctx);
+      return AppleDialogShell(
+        title: title,
+        maxWidth: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              message,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.45,
+                color: t.inkSecondary,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: Text(cancelLabel),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: danger ? t.critical : t.accent,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Text(confirmLabel),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    },
+  );
+  return res ?? false;
+}
+
 class AppleCardGroup extends StatelessWidget {
   const AppleCardGroup({
     super.key,
@@ -164,60 +378,87 @@ class AppleSegmentedControl<T> extends StatelessWidget {
     required this.value,
     required this.options,
     required this.onChanged,
+    this.disabledValues = const {},
+    this.onDisabledSelected,
+    this.compact = false,
   });
 
   final T value;
   final List<({T value, String label})> options;
   final ValueChanged<T> onChanged;
+  final Set<T> disabledValues;
+  final ValueChanged<T>? onDisabledSelected;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final t = AppleTokens.of(context);
-    return Container(
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: t.bgSurfaceSecondary,
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: t.borderHairline),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: t.bgSurfaceSecondary,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: t.borderHairline),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final opt in options)
+              _buildSegment(t, opt),
+          ],
+        ),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final opt in options)
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () => onChanged(opt.value),
-                child: AnimatedContainer(
-                  duration: AppleTokens.motion,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: value == opt.value ? t.bgSurface : Colors.transparent,
-                    borderRadius: BorderRadius.circular(7),
-                    boxShadow: value == opt.value
-                        ? [
-                            const BoxShadow(
-                              color: Color(0x18000000),
-                              blurRadius: 3,
-                              offset: Offset(0, 1),
-                            ),
-                          ]
-                        : null,
-                  ),
-                  child: Text(
-                    opt.label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color:
-                          value == opt.value ? t.inkPrimary : t.inkSecondary,
+    );
+  }
+
+  Widget _buildSegment(AppleTokens t, ({T value, String label}) opt) {
+    final selected = value == opt.value;
+    final disabled = disabledValues.contains(opt.value);
+    return MouseRegion(
+      cursor: disabled && onDisabledSelected == null
+          ? SystemMouseCursors.forbidden
+          : SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () {
+          if (disabled) {
+            onDisabledSelected?.call(opt.value);
+            return;
+          }
+          onChanged(opt.value);
+        },
+        child: AnimatedContainer(
+          duration: AppleTokens.motion,
+          padding: compact
+              ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
+              : const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+          decoration: BoxDecoration(
+            color: selected ? t.bgSurface : Colors.transparent,
+            borderRadius: BorderRadius.circular(7),
+            boxShadow: selected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x18000000),
+                      blurRadius: 3,
+                      offset: Offset(0, 1),
                     ),
-                  ),
-                ),
-              ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            opt.label,
+            style: TextStyle(
+              fontSize: compact ? 11 : 12,
+              fontWeight: FontWeight.w500,
+              color: disabled
+                  ? t.inkTertiary
+                  : selected
+                      ? t.inkPrimary
+                      : t.inkSecondary,
             ),
-        ],
+          ),
+        ),
       ),
     );
   }

@@ -89,6 +89,9 @@ func (d *Dispatcher) deliverToDevice(ctx context.Context, dev domain.Device, msg
 	if d.hub != nil && d.hub.SendToDevice(dev.ID, msg) {
 		return "ws", nil
 	}
+	if dev.PushMode == domain.PushModeWS || dev.PushMode == domain.PushModeWeb {
+		return "offline", nil
+	}
 	if d.fcm != nil && dev.FCMToken != "" {
 		if err := d.fcm.Send(ctx, dev, msg); err != nil {
 			if errors.Is(err, ErrInvalidFCMToken) {

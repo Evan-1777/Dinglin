@@ -31,6 +31,7 @@ class AlarmRingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         val scheduleId = intent?.getStringExtra("schedule_id") ?: ""
+        val entityType = intent?.getStringExtra("entity_type") ?: "schedule"
         val snoozeMins = intent?.getIntExtra("snooze_minutes", 10) ?: 10
 
         if (action == ACTION_STOP || action == ACTION_SNOOZE) {
@@ -40,7 +41,21 @@ class AlarmRingService : Service() {
                 val token = ScheduleStore.authToken(this)
                 if (baseUrl.isNotEmpty() && token.isNotEmpty()) {
                     thread(name = "dinglin-alarm-action") {
-                        if (action == ACTION_SNOOZE) {
+                        if (entityType == "notification") {
+                            val body = if (action == ACTION_SNOOZE) {
+                                JSONObject()
+                                    .put("action_id", "snooze")
+                                    .put("snooze_minutes", snoozeMins)
+                                    .toString()
+                            } else {
+                                JSONObject().put("action_id", "dismiss").toString()
+                            }
+                            AlarmTriggerReceiver.postJson(
+                                "$baseUrl/api/v1/notifications/$scheduleId/receipt",
+                                token,
+                                body
+                            )
+                        } else if (action == ACTION_SNOOZE) {
                             AlarmTriggerReceiver.postJson(
                                 "$baseUrl/api/v1/schedules/$scheduleId/snooze",
                                 token,
@@ -70,6 +85,7 @@ class AlarmRingService : Service() {
         val fullScreenIntent = Intent(this, AlarmFullScreenActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra("schedule_id", scheduleId)
+            putExtra("entity_type", entityType)
             putExtra("title", title)
             putExtra("body", body)
             putExtra("snooze_minutes", snoozeMins)
@@ -87,6 +103,7 @@ class AlarmRingService : Service() {
             Intent(this, AlarmRingService::class.java).apply {
                 this.action = ACTION_SNOOZE
                 putExtra("schedule_id", scheduleId)
+                putExtra("entity_type", entityType)
                 putExtra("snooze_minutes", snoozeMins)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -98,6 +115,7 @@ class AlarmRingService : Service() {
             Intent(this, AlarmRingService::class.java).apply {
                 this.action = ACTION_STOP
                 putExtra("schedule_id", scheduleId)
+                putExtra("entity_type", entityType)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

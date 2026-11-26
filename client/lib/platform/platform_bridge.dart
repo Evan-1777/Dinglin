@@ -7,6 +7,8 @@ abstract class PlatformBridge {
 
   String get platformName;
 
+  bool get supportsKeepAlive;
+
   Future<void> initialize({
     required String serverUrl,
     required String authToken,
@@ -22,6 +24,24 @@ abstract class PlatformBridge {
   Future<bool> hasGms();
 
   Future<String?> getFcmToken();
+
+  Future<void> configureKeepAlive(KeepAliveConfig config);
+
+  Future<PermissionStatus> getPermissionStatus();
+
+  Future<bool> requestPermission(String permission);
+
+  Future<void> updateSyncCursor(int lastSeq, {bool reset = false});
+
+  Future<int> getSyncCursor();
+
+  Future<String> getLocalTimezone();
+
+  Future<void> updateDndPolicy({
+    required bool enabled,
+    required String start,
+    required String end,
+  });
 
   Stream<Map<String, dynamic>> get nativeEvents;
 

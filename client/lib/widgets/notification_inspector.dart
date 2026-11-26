@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/models.dart';
 import '../state/app_store.dart';
@@ -30,35 +31,23 @@ class NotificationInspector extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            height: AppleTokens.topbarHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: t.borderHairline)),
-            ),
-            child: Row(
-              children: [
-                Text(
-                  '通知详情',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: t.inkPrimary,
-                  ),
-                ),
-                const Spacer(),
-                AppleIconButton(
-                  icon: AppIconName.close,
-                  tooltip: '关闭',
-                  onPressed: store.closeInspector,
-                ),
-              ],
-            ),
+          AppleTopBar(
+            title: '通知详情',
+            horizontalPadding: 16,
+            trailing: [
+              AppleIconButton(
+                icon: AppIconName.close,
+                tooltip: '关闭',
+                onPressed: store.closeInspector,
+              ),
+            ],
           ),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
+            child: SafeArea(
+              top: false,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
                 Row(
                   children: [
                     if (src != null) ...[
@@ -138,6 +127,16 @@ class NotificationInspector extends StatelessWidget {
                         toastLabel: '已确认',
                       ),
                     ),
+                    AppleActionChip(
+                      icon: AppIconName.close,
+                      label: '忽略',
+                      done: notification.status == 'dismissed',
+                      onPressed: () => store.submitReceipt(
+                        notification.id,
+                        'dismiss',
+                        toastLabel: '已忽略',
+                      ),
+                    ),
                     for (final mins in const [5, 15, 60])
                       AppleActionChip(
                         icon: AppIconName.snooze,
@@ -162,26 +161,39 @@ class NotificationInspector extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 // Metadata KV box
-                Container(
-                  decoration: BoxDecoration(
-                    color: t.bgCanvas,
-                    borderRadius: BorderRadius.circular(AppleTokens.radiusMd),
-                    border: Border.all(color: t.borderHairline),
-                  ),
-                  child: Column(
-                    children: [
-                      _KvRow(label: '状态', value: _statusLabel(notification.status)),
+                Builder(
+                  builder: (context) {
+                    final kvEntries = <(String, String)>[
+                      ('状态', _statusLabel(notification.status)),
                       if (notification.category.isNotEmpty)
-                        _KvRow(label: '分类', value: notification.category),
+                        ('分类', notification.category),
                       if (notification.callbackUrl.isNotEmpty)
-                        _KvRow(label: '回调', value: notification.callbackUrl),
+                        ('回调', notification.callbackUrl),
                       for (final entry in notification.metadata.entries)
-                        _KvRow(
-                          label: entry.key,
-                          value: entry.value.toString(),
-                        ),
-                    ],
-                  ),
+                        (entry.key, entry.value.toString()),
+                    ];
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: t.bgCanvas,
+                        borderRadius: BorderRadius.circular(AppleTokens.radiusMd),
+                        border: Border.all(color: t.borderHairline),
+                      ),
+                      child: Column(
+                        children: [
+                          for (var i = 0; i < kvEntries.length; i++)
+                            _KvRow(
+                              label: kvEntries[i].$1,
+                              value: kvEntries[i].$2,
+                              isLast: i == kvEntries.length - 1,
+                              copyable: kvEntries[i].$1 == '回调' ||
+                                  kvEntries[i].$2.startsWith('http') ||
+                                  kvEntries[i].$2.length > 24,
+                              onCopied: () => store.showToast('已复制'),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 18),
                 Text(
@@ -236,7 +248,8 @@ class NotificationInspector extends StatelessWidget {
                       ],
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -275,9 +288,18 @@ class _PriorityPill extends StatelessWidget {
 }
 
 class _KvRow extends StatelessWidget {
-  const _KvRow({required this.label, required this.value});
+  const _KvRow({
+    required this.label,
+    required this.value,
+    this.isLast = false,
+    this.copyable = false,
+    this.onCopied,
+  });
   final String label;
   final String value;
+  final bool isLast;
+  final bool copyable;
+  final VoidCallback? onCopied;
 
   @override
   Widget build(BuildContext context) {
@@ -285,7 +307,9 @@ class _KvRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: t.borderHairline)),
+        border: isLast
+            ? null
+            : Border(bottom: BorderSide(color: t.borderHairline)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,7 +317,7 @@ class _KvRow extends StatelessWidget {
           Text(label, style: TextStyle(fontSize: 12, color: t.inkSecondary)),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
+            child: SelectableText(
               value,
               textAlign: TextAlign.right,
               style: TextStyle(
@@ -303,6 +327,27 @@ class _KvRow extends StatelessWidget {
               ),
             ),
           ),
+          if (copyable) ...[
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: value));
+                onCopied?.call();
+              },
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Tooltip(
+                  message: '复制',
+                  child: AppIcon(
+                    AppIconName.copy,
+                    size: 13,
+                    color: t.inkTertiary,
+                    semanticsLabel: '复制 $label',
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -25,6 +25,7 @@ class DinglinMessagingService : FirebaseMessagingService() {
         if (priority == "critical" && eventType == "notification.created") {
             val svc = Intent(applicationContext, AlarmRingService::class.java).apply {
                 putExtra("schedule_id", entityId)
+                putExtra("entity_type", "notification")
                 putExtra("title", title)
                 putExtra("body", body)
                 putExtra("vibrate", true)

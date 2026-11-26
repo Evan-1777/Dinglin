@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"dinglin/server/internal/domain"
 	"dinglin/server/internal/store"
 )
+
+var hhmmPattern = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 
 func (s *Server) handleCreatePairingCode(w http.ResponseWriter, r *http.Request) {
 	code, expiresAt, err := s.pairing.Issue(time.Now().UTC())
@@ -122,27 +125,80 @@ func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateDevice(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		Name *string `json:"name"`
+		Name     *string `json:"name"`
+		PushMode *string `json:"push_mode"`
 	}
 	if err := DecodeJSON(r, &req); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
-	if req.Name == nil || strings.TrimSpace(*req.Name) == "" {
-		WriteError(w, http.StatusBadRequest, "validation_error", "name is required")
+	if req.Name == nil && req.PushMode == nil {
+		WriteError(w, http.StatusBadRequest, "validation_error", "name or push_mode is required")
 		return
 	}
-	res, err := s.store.DB.ExecContext(r.Context(), `UPDATE devices SET name = ? WHERE id = ?`, strings.TrimSpace(*req.Name), id)
+
+	var (
+		dev        domain.Device
+		hasGMS     int
+		lastSeenAt sql.NullInt64
+		createdAt  int64
+	)
+	err := s.store.DB.QueryRowContext(r.Context(), `
+		SELECT id, name, platform, fcm_token, has_gms, push_mode, last_seen_at, created_at
+		FROM devices WHERE id = ?`, id,
+	).Scan(&dev.ID, &dev.Name, &dev.Platform, &dev.FCMToken, &hasGMS, &dev.PushMode, &lastSeenAt, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		WriteError(w, http.StatusNotFound, "not_found", "device not found")
+		return
+	}
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		WriteError(w, http.StatusNotFound, "not_found", "device not found")
+	dev.HasGMS = hasGMS != 0
+	dev.LastSeenAt = store.FromNullUnix(lastSeenAt)
+	dev.CreatedAt = time.Unix(createdAt, 0).UTC()
+
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		if trimmed == "" {
+			WriteError(w, http.StatusBadRequest, "validation_error", "name cannot be empty")
+			return
+		}
+		dev.Name = trimmed
+	}
+	if req.PushMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*req.PushMode))
+		if !domain.ValidPushMode(mode) {
+			WriteError(w, http.StatusBadRequest, "validation_error", "invalid push_mode")
+			return
+		}
+		if dev.Platform == domain.PlatformWeb && mode != domain.PushModeWeb {
+			WriteError(w, http.StatusBadRequest, "validation_error", "web device only supports web push_mode")
+			return
+		}
+		if dev.Platform == domain.PlatformAndroid && mode == domain.PushModeWeb {
+			WriteError(w, http.StatusBadRequest, "validation_error", "android device only supports ws or fcm push_mode")
+			return
+		}
+		if mode == domain.PushModeFCM && dev.FCMToken == "" {
+			WriteError(w, http.StatusBadRequest, "validation_error", "device has no fcm_token registered")
+			return
+		}
+		dev.PushMode = mode
+	}
+
+	if _, err := s.store.DB.ExecContext(r.Context(),
+		`UPDATE devices SET name = ?, push_mode = ? WHERE id = ?`,
+		dev.Name, dev.PushMode, dev.ID,
+	); err != nil {
+		WriteError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"id": id, "name": strings.TrimSpace(*req.Name)})
+	if s.onlineChecker != nil {
+		dev.Online = s.onlineChecker.IsOnline(dev.ID)
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"device": dev})
 }
 
 func (s *Server) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
@@ -163,17 +219,24 @@ func (s *Server) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateFCMToken(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		FCMToken string `json:"fcm_token"`
-		HasGMS   *bool  `json:"has_gms"`
+		FCMToken string  `json:"fcm_token"`
+		HasGMS   *bool   `json:"has_gms"`
+		PushMode *string `json:"push_mode"`
 	}
 	if err := DecodeJSON(r, &req); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
 
-	var platform string
-	var hasGMSInt int
-	err := s.store.DB.QueryRowContext(r.Context(), `SELECT platform, has_gms FROM devices WHERE id = ?`, id).Scan(&platform, &hasGMSInt)
+	var (
+		platform     string
+		hasGMSInt    int
+		oldFCMToken  string
+		oldPushMode  string
+	)
+	err := s.store.DB.QueryRowContext(r.Context(),
+		`SELECT platform, has_gms, fcm_token, push_mode FROM devices WHERE id = ?`, id,
+	).Scan(&platform, &hasGMSInt, &oldFCMToken, &oldPushMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		WriteError(w, http.StatusNotFound, "not_found", "device not found")
 		return
@@ -188,10 +251,27 @@ func (s *Server) handleUpdateFCMToken(w http.ResponseWriter, r *http.Request) {
 		hasGMS = *req.HasGMS
 	}
 	fcmToken := strings.TrimSpace(req.FCMToken)
-	pushMode := domain.PushModeWS
+	pushMode := oldPushMode
+	if pushMode == "" {
+		pushMode = domain.PushModeWS
+	}
 	if platform == domain.PlatformWeb {
 		pushMode = domain.PushModeWeb
-	} else if fcmToken != "" && hasGMS {
+	} else if req.PushMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*req.PushMode))
+		if mode != domain.PushModeWS && mode != domain.PushModeFCM {
+			WriteError(w, http.StatusBadRequest, "validation_error", "invalid push_mode")
+			return
+		}
+		if mode == domain.PushModeFCM && fcmToken == "" {
+			WriteError(w, http.StatusBadRequest, "validation_error", "fcm_token is required for fcm push_mode")
+			return
+		}
+		pushMode = mode
+	} else if fcmToken == "" && pushMode == domain.PushModeFCM {
+		pushMode = domain.PushModeWS
+	} else if oldFCMToken == "" && fcmToken != "" && hasGMS {
+		// Auto-enable FCM only on initial token registration; token refreshes preserve manual WS override.
 		pushMode = domain.PushModeFCM
 	}
 
@@ -240,10 +320,20 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		cur.DNDEnabled = *req.DNDEnabled
 	}
 	if req.DNDStart != nil {
-		cur.DNDStart = strings.TrimSpace(*req.DNDStart)
+		v := strings.TrimSpace(*req.DNDStart)
+		if !hhmmPattern.MatchString(v) {
+			WriteError(w, http.StatusBadRequest, "validation_error", "dnd_start must be HH:MM (00:00-23:59)")
+			return
+		}
+		cur.DNDStart = v
 	}
 	if req.DNDEnd != nil {
-		cur.DNDEnd = strings.TrimSpace(*req.DNDEnd)
+		v := strings.TrimSpace(*req.DNDEnd)
+		if !hhmmPattern.MatchString(v) {
+			WriteError(w, http.StatusBadRequest, "validation_error", "dnd_end must be HH:MM (00:00-23:59)")
+			return
+		}
+		cur.DNDEnd = v
 	}
 	if req.DefaultSnoozeMinutes != nil {
 		if *req.DefaultSnoozeMinutes <= 0 || *req.DefaultSnoozeMinutes > 1440 {

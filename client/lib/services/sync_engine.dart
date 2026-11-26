@@ -15,6 +15,7 @@ class SyncEngine {
     required this.api,
     required this.onEvent,
     required this.onStatusChanged,
+    this.onSeqAdvanced,
     WsChannelFactory? channelFactory,
   }) : _channelFactory = channelFactory ?? WebSocketChannel.connect;
 
@@ -23,12 +24,15 @@ class SyncEngine {
   static const _kDeviceId = 'dinglin.device_id';
   static const _kLastSeq = 'dinglin.last_seq';
   static const _kThemePref = 'dinglin.theme_pref';
+  static const _kKeepAliveMode = 'dinglin.keepalive_mode';
+  static const _kKeepAliveInterval = 'dinglin.keepalive_interval_min';
 
   static const List<int> _backoffSeconds = [2, 4, 8, 30];
 
   final ApiClient api;
   final void Function(SyncEvent event) onEvent;
   final void Function(ConnectionStatus status) onStatusChanged;
+  final void Function(int seq)? onSeqAdvanced;
   final WsChannelFactory _channelFactory;
 
   int _lastSeq = 0;
@@ -41,8 +45,14 @@ class SyncEngine {
 
   int get lastSeq => _lastSeq;
 
-  Future<({String serverUrl, String token, String deviceId, int lastSeq, ThemePreference theme})>
-      loadPersisted() async {
+  Future<({
+    String serverUrl,
+    String token,
+    String deviceId,
+    int lastSeq,
+    ThemePreference theme,
+    KeepAliveConfig keepAlive,
+  })> loadPersisted() async {
     final prefs = await SharedPreferences.getInstance();
     final url = prefs.getString(_kServerUrl) ?? '';
     final tok = prefs.getString(_kAuthToken) ?? '';
@@ -53,12 +63,17 @@ class SyncEngine {
       (e) => e.name == themeStr,
       orElse: () => ThemePreference.system,
     );
+    final keepAlive = KeepAliveConfig(
+      mode: KeepAliveMode.fromString(prefs.getString(_kKeepAliveMode)),
+      intervalMinutes: prefs.getInt(_kKeepAliveInterval) ?? 5,
+    );
     return (
       serverUrl: url,
       token: tok,
       deviceId: devId,
       lastSeq: _lastSeq,
       theme: theme,
+      keepAlive: keepAlive,
     );
   }
 
@@ -74,16 +89,40 @@ class SyncEngine {
     api.updateCredentials(baseUrl: serverUrl, token: token);
   }
 
+  Future<void> clearCredentials() async {
+    _stopped = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _disconnectWs();
+    _lastSeq = 0;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kServerUrl);
+    await prefs.remove(_kAuthToken);
+    await prefs.remove(_kDeviceId);
+    await prefs.remove(_kLastSeq);
+    api.updateCredentials(baseUrl: '', token: '');
+    onStatusChanged(ConnectionStatus.unconfigured);
+  }
+
+  Future<void> saveKeepAlive(KeepAliveConfig cfg) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kKeepAliveMode, cfg.mode.wireName);
+    await prefs.setInt(_kKeepAliveInterval, cfg.intervalMinutes);
+  }
+
   Future<void> saveTheme(ThemePreference pref) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kThemePref, pref.name);
   }
+
+  Future<void> advanceSeqFromExternal(int seq) => _saveSeq(seq);
 
   Future<void> _saveSeq(int seq) async {
     if (seq <= _lastSeq) return;
     _lastSeq = seq;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kLastSeq, _lastSeq);
+    onSeqAdvanced?.call(_lastSeq);
   }
 
   Future<void> start() async {
@@ -93,6 +132,20 @@ class SyncEngine {
       return;
     }
     await _syncAndConnect();
+  }
+
+  Future<void> resume() async {
+    if (_stopped || api.baseUrl.isEmpty || api.token.isEmpty) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    try {
+      await syncOnce();
+      if (_channel == null) {
+        _connectWs();
+      }
+    } catch (_) {
+      _scheduleReconnect();
+    }
   }
 
   Future<void> syncOnce() async {

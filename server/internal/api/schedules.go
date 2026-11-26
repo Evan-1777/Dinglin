@@ -109,6 +109,7 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request, sc
 		Title         *string    `json:"title"`
 		Body          *string    `json:"body"`
 		Priority      *string    `json:"priority"`
+		ScheduleType  *string    `json:"schedule_type"`
 		FireAt        *time.Time `json:"fire_at"`
 		CronExpr      *string    `json:"cron_expr"`
 		Timezone      *string    `json:"timezone"`
@@ -126,6 +127,7 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request, sc
 		Title:         req.Title,
 		Body:          req.Body,
 		Priority:      req.Priority,
+		ScheduleType:  req.ScheduleType,
 		FireAt:        req.FireAt,
 		CronExpr:      req.CronExpr,
 		Timezone:      req.Timezone,

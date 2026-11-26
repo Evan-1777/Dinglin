@@ -12,6 +12,7 @@ class BootRestoreReceiver : BroadcastReceiver() {
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 NotificationChannels.ensureCreated(context)
                 ExactAlarmScheduler.restoreAll(context)
+                KeepAliveManager.apply(context)
             }
         }
     }

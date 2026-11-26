@@ -260,6 +260,63 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]domain.Notification
 	return out, nil
 }
 
+// MarkAllRead marks unread notifications (optionally filtered by sourceID) as read and emits a sync event.
+func (s *Service) MarkAllRead(ctx context.Context, sourceID string) (int64, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	now := time.Now().UTC()
+
+	tx, err := s.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	query := `UPDATE notifications SET status = ?, updated_at = ? WHERE status = ?`
+	args := []any{domain.NotificationStatusRead, now.Unix(), domain.NotificationStatusUnread}
+	if sourceID != "" {
+		query += ` AND source_id = ?`
+		args = append(args, sourceID)
+	}
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if count == 0 {
+		return 0, nil
+	}
+
+	entityID := sourceID
+	if entityID == "" {
+		entityID = "all"
+	}
+	payload := map[string]any{
+		"source_id":  sourceID,
+		"count":      count,
+		"updated_at": now,
+	}
+	seq, payloadRaw, err := store.AppendSyncEventTx(ctx, tx, "notifications.read_all", entityID, payload, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	if s.dispatcher != nil {
+		s.dispatcher.Broadcast(ctx, push.EventMessage{
+			Seq:       seq,
+			EventType: "notifications.read_all",
+			EntityID:  entityID,
+			Data:      payloadRaw,
+		})
+	}
+	return count, nil
+}
+
 // CleanupExpired deletes notifications older than retention_days or past expires_at by more than 24h.
 func (s *Service) CleanupExpired(ctx context.Context, defaultRetentionDays int) (int64, error) {
 	cfg, err := s.store.GetSettings(ctx, defaultRetentionDays)

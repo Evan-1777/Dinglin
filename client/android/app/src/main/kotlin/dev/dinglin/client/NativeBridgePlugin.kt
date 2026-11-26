@@ -1,29 +1,65 @@
 package dev.dinglin.client
 
+import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
+import androidx.core.app.ActivityCompat
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.lang.ref.WeakReference
+import java.util.TimeZone
 
 object NativeBridgePlugin : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private const val METHOD_CHANNEL = "dev.dinglin/native"
     private const val EVENT_CHANNEL = "dev.dinglin/events"
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var appContext: Context? = null
+    private var activityRef: WeakReference<Activity>? = null
     private var eventSink: EventChannel.EventSink? = null
+    private var pendingPermResult: MethodChannel.Result? = null
 
-    fun attach(context: Context, messenger: BinaryMessenger) {
-        appContext = context.applicationContext
+    fun attach(activity: Activity, messenger: BinaryMessenger) {
+        appContext = activity.applicationContext
+        activityRef = WeakReference(activity)
         MethodChannel(messenger, METHOD_CHANNEL).setMethodCallHandler(this)
         EventChannel(messenger, EVENT_CHANNEL).setStreamHandler(this)
     }
 
+    fun detachActivity(activity: Activity) {
+        if (activityRef?.get() === activity) {
+            activityRef = null
+        }
+    }
+
+    fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray) {
+        if (requestCode != PermissionHelper.REQ_POST_NOTIFICATIONS) return
+        val pending = pendingPermResult
+        pendingPermResult = null
+        val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            val act = activityRef?.get()
+            if (act != null && !ActivityCompat.shouldShowRequestPermissionRationale(act, Manifest.permission.POST_NOTIFICATIONS)) {
+                PermissionHelper.openNotificationSettings(act)
+            }
+        }
+        pending?.success(granted)
+    }
+
     fun emitEvent(event: Map<String, Any?>) {
-        eventSink?.success(event)
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            eventSink?.success(event)
+        } else {
+            mainHandler.post { eventSink?.success(event) }
+        }
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -100,6 +136,53 @@ object NativeBridgePlugin : MethodChannel.MethodCallHandler, EventChannel.Stream
                 } catch (_: Throwable) {
                     result.success(null)
                 }
+            }
+            "configureKeepAlive" -> {
+                val mode = call.argument<String>("mode") ?: "auto"
+                val intervalMin = (call.argument<Number>("interval_min"))?.toInt() ?: 5
+                ScheduleStore.saveKeepAlive(ctx, mode, intervalMin)
+                KeepAliveManager.apply(ctx)
+                result.success(null)
+            }
+            "getPermissionStatus" -> {
+                result.success(PermissionHelper.getStatus(ctx))
+            }
+            "requestPermission" -> {
+                val permission = call.argument<String>("permission") ?: ""
+                pendingPermResult?.success(false)
+                pendingPermResult = result
+                val completedSync = PermissionHelper.requestPermission(activityRef?.get(), ctx, permission) { granted ->
+                    if (pendingPermResult === result) {
+                        pendingPermResult = null
+                        result.success(granted)
+                    }
+                }
+                if (completedSync && pendingPermResult === result) {
+                    pendingPermResult = null
+                }
+            }
+            "updateSyncCursor" -> {
+                val lastSeq = (call.argument<Number>("last_seq"))?.toLong() ?: 0L
+                val reset = call.argument<Boolean>("reset") ?: false
+                if (reset) {
+                    ScheduleStore.resetLastSeq(ctx)
+                } else {
+                    ScheduleStore.saveLastSeq(ctx, lastSeq)
+                }
+                result.success(null)
+            }
+            "getSyncCursor" -> {
+                result.success(ScheduleStore.lastSeq(ctx))
+            }
+            "getLocalTimezone" -> {
+                result.success(TimeZone.getDefault().id)
+            }
+            "updateDndPolicy" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: false
+                val start = call.argument<String>("start") ?: "23:00"
+                val end = call.argument<String>("end") ?: "07:00"
+                ScheduleStore.saveDndPolicy(ctx, enabled, start, end)
+                result.success(null)
             }
             else -> result.notImplemented()
         }

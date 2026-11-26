@@ -34,110 +34,145 @@ class AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = AppleTokens.of(context);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final layout = resolveShellLayout(constraints.maxWidth);
-        return CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.escape): () {
-              store.closeInspector();
+    final overlayStyle = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: t.isDark ? Brightness.light : Brightness.dark,
+      statusBarBrightness: t.isDark ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: t.bgCanvas,
+      systemNavigationBarIconBrightness:
+          t.isDark ? Brightness.light : Brightness.dark,
+    );
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final layout = resolveShellLayout(constraints.maxWidth);
+          return CallbackShortcuts(
+            bindings: {
+              const SingleActivator(LogicalKeyboardKey.escape): () {
+                store.closeInspector();
+              },
+              const SingleActivator(LogicalKeyboardKey.slash): () {
+                if (!_isTextInputFocused()) onFocusSearch?.call();
+              },
+              const SingleActivator(LogicalKeyboardKey.keyN): () {
+                if (!_isTextInputFocused()) onCreateSchedule?.call();
+              },
             },
-            const SingleActivator(LogicalKeyboardKey.slash): () {
-              if (!_isTextInputFocused()) onFocusSearch?.call();
-            },
-            const SingleActivator(LogicalKeyboardKey.keyN): () {
-              if (!_isTextInputFocused()) onCreateSchedule?.call();
-            },
-          },
-          child: Focus(
-            autofocus: true,
-            child: Scaffold(
-              backgroundColor: t.bgCanvas,
-              body: Stack(
-                children: [
-                  Row(
-                    children: [
-                      if (layout == ShellLayout.desktop)
-                        _DesktopSidebar(store: store),
-                      if (layout == ShellLayout.tablet)
-                        _CompactRail(store: store),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Expanded(child: body),
-                            if (layout == ShellLayout.mobile)
-                              _MobileTabBar(store: store),
-                          ],
+            child: Focus(
+              autofocus: true,
+              child: Scaffold(
+                backgroundColor: t.bgCanvas,
+                body: Stack(
+                  children: [
+                    Row(
+                      children: [
+                        if (layout == ShellLayout.desktop)
+                          _DesktopSidebar(store: store),
+                        if (layout == ShellLayout.tablet)
+                          _CompactRail(store: store),
+                        Expanded(
+                          child: Column(
+                            children: [
+                              Expanded(child: body),
+                              if (layout == ShellLayout.mobile)
+                                _MobileTabBar(store: store),
+                            ],
+                          ),
+                        ),
+                        if (layout == ShellLayout.desktop && inspector != null)
+                          SizedBox(
+                            width: AppleTokens.inspectorWidth,
+                            child: inspector!,
+                          ),
+                      ],
+                    ),
+                    // Tablet slide-over inspector drawer
+                    if (layout == ShellLayout.tablet && inspector != null) ...[
+                      Positioned.fill(
+                        child: GestureDetector(
+                          onTap: store.closeInspector,
+                          child: ColoredBox(color: t.scrim),
                         ),
                       ),
-                      if (layout == ShellLayout.desktop && inspector != null)
-                        SizedBox(
-                          width: AppleTokens.inspectorWidth,
+                      Positioned(
+                        top: 0,
+                        bottom: 0,
+                        right: 0,
+                        width: AppleTokens.inspectorWidth,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(boxShadow: t.floatShadow),
                           child: inspector!,
                         ),
+                      ),
                     ],
-                  ),
-                  // Tablet slide-over inspector drawer
-                  if (layout == ShellLayout.tablet && inspector != null) ...[
-                    Positioned.fill(
-                      child: GestureDetector(
-                        onTap: store.closeInspector,
-                        child: ColoredBox(color: t.scrim),
-                      ),
-                    ),
-                    Positioned(
-                      top: 0,
-                      bottom: 0,
-                      right: 0,
-                      width: AppleTokens.inspectorWidth,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(boxShadow: t.floatShadow),
-                        child: inspector!,
-                      ),
-                    ),
-                  ],
-                  // Mobile full-screen inspector overlay
-                  if (layout == ShellLayout.mobile && inspector != null)
-                    Positioned.fill(child: inspector!),
-                  // Toast feedback
-                  if (store.toastMessage != null)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: layout == ShellLayout.mobile ? 76 : 24,
-                      child: IgnorePointer(
-                        child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: t.isDark
-                                  ? const Color(0xFF2C2C2E)
-                                  : const Color(0xFF1D1D1F),
-                              borderRadius: BorderRadius.circular(
-                                  AppleTokens.radiusPill),
-                              boxShadow: t.floatShadow,
-                            ),
-                            child: Text(
-                              store.toastMessage!,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
+                    // Mobile full-screen inspector overlay
+                    if (layout == ShellLayout.mobile && inspector != null)
+                      Positioned.fill(child: inspector!),
+                    // Toast feedback
+                    if (store.toastMessage != null)
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: (layout == ShellLayout.mobile ? 76.0 : 24.0) +
+                            MediaQuery.paddingOf(context).bottom,
+                        child: IgnorePointer(
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: store.toastIsError
+                                    ? t.critical
+                                    : (t.isDark
+                                        ? const Color(0xFF2C2C2E)
+                                        : const Color(0xFF1D1D1F)),
+                                borderRadius: BorderRadius.circular(
+                                    AppleTokens.radiusPill),
+                                boxShadow: t.floatShadow,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  AppIcon(
+                                    store.toastIsError
+                                        ? AppIconName.alert
+                                        : AppIconName.checkCircle,
+                                    size: 14,
+                                    color: store.toastIsError
+                                        ? Colors.white
+                                        : t.success,
+                                    semanticsLabel:
+                                        store.toastIsError ? '错误' : '成功',
+                                  ),
+                                  const SizedBox(width: 7),
+                                  Flexible(
+                                    child: Text(
+                                      store.toastMessage!,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -160,9 +195,12 @@ class _DesktopSidebar extends StatelessWidget {
       child: FrostedSurface(
         color: t.bgRail,
         border: Border(right: BorderSide(color: t.borderHairline)),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
-          child: Column(
+        child: SafeArea(
+          bottom: false,
+          right: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Brand header
@@ -244,6 +282,7 @@ class _DesktopSidebar extends StatelessWidget {
                       for (final src in store.sources)
                         _SourceNavItem(
                           source: src,
+                          unreadCount: store.unreadCountForSource(src.id),
                           active: store.activeTab == AppTab.inbox &&
                               store.selectedSourceId == src.id,
                           onTap: () => store.setSelectedSource(src.id),
@@ -261,7 +300,10 @@ class _DesktopSidebar extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    _ConnectionIndicator(status: store.connectionStatus),
+                    _ConnectionIndicator(
+                      status: store.connectionStatus,
+                      onTap: () => store.setTab(AppTab.settings),
+                    ),
                     const Spacer(),
                     AppleIconButton(
                       icon: AppIconName.settings,
@@ -274,6 +316,7 @@ class _DesktopSidebar extends StatelessWidget {
               ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -292,9 +335,12 @@ class _CompactRail extends StatelessWidget {
       child: FrostedSurface(
         color: t.bgRail,
         border: Border(right: BorderSide(color: t.borderHairline)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
+        child: SafeArea(
+          bottom: false,
+          right: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
             children: [
               Container(
                 width: 30,
@@ -330,8 +376,20 @@ class _CompactRail extends StatelessWidget {
                 onPressed: () => store.setTab(AppTab.schedules),
               ),
               const Spacer(),
-              _StatusDot(status: store.connectionStatus),
-              const SizedBox(height: 12),
+              Tooltip(
+                message: '连接设置',
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => store.setTab(AppTab.settings),
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: _StatusDot(status: store.connectionStatus),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
               AppleIconButton(
                 icon: AppIconName.settings,
                 tooltip: '设置',
@@ -342,6 +400,7 @@ class _CompactRail extends StatelessWidget {
               ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -368,6 +427,7 @@ class _MobileTabBar extends StatelessWidget {
               _MobileTabItem(
                 icon: AppIconName.bell,
                 label: '通知',
+                badge: store.unreadCount,
                 active: store.activeTab == AppTab.inbox,
                 onTap: () => store.setTab(AppTab.inbox),
               ),
@@ -397,12 +457,14 @@ class _MobileTabItem extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.badge = 0,
   });
 
   final AppIconName icon;
   final String label;
   final bool active;
   final VoidCallback onTap;
+  final int badge;
 
   @override
   Widget build(BuildContext context) {
@@ -415,7 +477,39 @@ class _MobileTabItem extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            AppIcon(icon, size: 20, color: color, semanticsLabel: label),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                AppIcon(icon, size: 20, color: color, semanticsLabel: label),
+                if (badge > 0)
+                  Positioned(
+                    top: -5,
+                    right: -11,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 1,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16),
+                      decoration: BoxDecoration(
+                        color: t.critical,
+                        borderRadius:
+                            BorderRadius.circular(AppleTokens.radiusPill),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        badge > 99 ? '99+' : '$badge',
+                        style: AppleTokens.tabular.copyWith(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                          height: 1.1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             const SizedBox(height: 3),
             Text(
               label,
@@ -523,11 +617,13 @@ class _SidebarNavItemState extends State<_SidebarNavItem> {
 class _SourceNavItem extends StatelessWidget {
   const _SourceNavItem({
     required this.source,
+    required this.unreadCount,
     required this.active,
     required this.onTap,
   });
 
   final DinglinSource source;
+  final int unreadCount;
   final bool active;
   final VoidCallback onTap;
 
@@ -567,6 +663,24 @@ class _SourceNavItem extends StatelessWidget {
                   ),
                 ),
               ),
+              if (unreadCount > 0)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: active ? t.accent : t.bgHover,
+                    borderRadius:
+                        BorderRadius.circular(AppleTokens.radiusPill),
+                  ),
+                  child: Text(
+                    '$unreadCount',
+                    style: AppleTokens.tabular.copyWith(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: active ? Colors.white : t.inkSecondary,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -576,8 +690,9 @@ class _SourceNavItem extends StatelessWidget {
 }
 
 class _ConnectionIndicator extends StatelessWidget {
-  const _ConnectionIndicator({required this.status});
+  const _ConnectionIndicator({required this.status, this.onTap});
   final ConnectionStatus status;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -588,17 +703,30 @@ class _ConnectionIndicator extends StatelessWidget {
       ConnectionStatus.offline => '离线',
       ConnectionStatus.unconfigured => '未配置',
     };
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(width: 6),
-        _StatusDot(status: status),
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: TextStyle(fontSize: 12, color: t.inkSecondary),
+    return Tooltip(
+      message: '网关连接设置',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(width: 6),
+                _StatusDot(status: status),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 12, color: t.inkSecondary),
+                ),
+              ],
+            ),
+          ),
         ),
-      ],
+      ),
     );
   }
 }

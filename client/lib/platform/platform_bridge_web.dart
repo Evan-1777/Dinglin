@@ -1,9 +1,21 @@
 import 'dart:async';
+import 'dart:js_interop';
 
 import 'package:web/web.dart' as web;
 
 import '../models/models.dart';
 import 'platform_bridge.dart';
+
+@JS('Intl.DateTimeFormat')
+extension type _JsDateTimeFormat._(JSObject _) implements JSObject {
+  external factory _JsDateTimeFormat();
+  external _JsResolvedOptions resolvedOptions();
+}
+
+@JS()
+extension type _JsResolvedOptions._(JSObject _) implements JSObject {
+  external String? get timeZone;
+}
 
 PlatformBridge createPlatformBridge() => WebPlatformBridge();
 
@@ -16,18 +28,15 @@ class WebPlatformBridge implements PlatformBridge {
   String get platformName => 'web';
 
   @override
+  bool get supportsKeepAlive => false;
+
+  @override
   Future<void> initialize({
     required String serverUrl,
     required String authToken,
     required String deviceId,
   }) async {
-    try {
-      if (web.Notification.permission == 'default') {
-        web.Notification.requestPermission();
-      }
-    } catch (_) {
-      // Notification API unavailable in restricted contexts.
-    }
+    // Web notification permission is requested explicitly on user gesture.
   }
 
   @override
@@ -95,6 +104,58 @@ class WebPlatformBridge implements PlatformBridge {
 
   @override
   Future<String?> getFcmToken() async => null;
+
+  @override
+  Future<void> configureKeepAlive(KeepAliveConfig config) async {}
+
+  @override
+  Future<PermissionStatus> getPermissionStatus() async {
+    var notifGranted = false;
+    try {
+      notifGranted = web.Notification.permission == 'granted';
+    } catch (_) {
+      notifGranted = false;
+    }
+    return PermissionStatus(
+      notifications: notifGranted,
+      batteryOptimization: true,
+      exactAlarm: true,
+      fullScreenIntent: true,
+    );
+  }
+
+  @override
+  Future<bool> requestPermission(String permission) async {
+    if (permission != 'notifications') return true;
+    try {
+      final result = await web.Notification.requestPermission().toDart;
+      return result.toDart == 'granted';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<void> updateSyncCursor(int lastSeq, {bool reset = false}) async {}
+
+  @override
+  Future<int> getSyncCursor() async => 0;
+
+  @override
+  Future<String> getLocalTimezone() async {
+    try {
+      final tz = _JsDateTimeFormat().resolvedOptions().timeZone;
+      if (tz != null && tz.isNotEmpty) return tz;
+    } catch (_) {}
+    return detectLocalIanaTimezone();
+  }
+
+  @override
+  Future<void> updateDndPolicy({
+    required bool enabled,
+    required String start,
+    required String end,
+  }) async {}
 
   @override
   Stream<Map<String, dynamic>> get nativeEvents => _eventCtrl.stream;

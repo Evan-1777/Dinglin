@@ -160,6 +160,17 @@ class ApiClient {
         .toList();
   }
 
+  Future<int> markAllNotificationsRead({String? sourceId}) async {
+    final data = await _request(
+      'POST',
+      '/api/v1/notifications/read-all',
+      body: {
+        if (sourceId != null && sourceId.isNotEmpty) 'source_id': sourceId,
+      },
+    );
+    return (data['updated'] as num?)?.toInt() ?? 0;
+  }
+
   Future<(DinglinReceipt, DinglinNotification)> submitReceipt({
     required String notificationId,
     required String actionId,
@@ -362,10 +373,28 @@ class ApiClient {
     await _request('DELETE', '/api/v1/devices/$id');
   }
 
-  Future<void> registerFcmToken(String deviceId, String fcmToken, bool hasGms) async {
+  Future<DinglinDevice> updateDevice(
+    String id, {
+    String? name,
+    String? pushMode,
+  }) async {
+    final data = await _request('PATCH', '/api/v1/devices/$id', body: {
+      'name': ?name,
+      'push_mode': ?pushMode,
+    });
+    return DinglinDevice.fromJson(data['device'] as Map<String, dynamic>);
+  }
+
+  Future<void> registerFcmToken(
+    String deviceId,
+    String fcmToken,
+    bool hasGms, {
+    String? pushMode,
+  }) async {
     await _request('POST', '/api/v1/devices/$deviceId/fcm-token', body: {
       'fcm_token': fcmToken,
       'has_gms': hasGms,
+      'push_mode': ?pushMode,
     });
   }
 

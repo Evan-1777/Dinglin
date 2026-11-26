@@ -4,6 +4,85 @@ enum ConnectionStatus { unconfigured, connected, reconnecting, offline }
 
 enum ThemePreference { system, light, dark }
 
+enum KeepAliveMode {
+  auto,
+  ws,
+  polling;
+
+  String get wireName => name;
+
+  static KeepAliveMode fromString(String? raw) {
+    return KeepAliveMode.values.firstWhere(
+      (m) => m.name == raw,
+      orElse: () => KeepAliveMode.auto,
+    );
+  }
+}
+
+@immutable
+class KeepAliveConfig {
+  const KeepAliveConfig({
+    this.mode = KeepAliveMode.auto,
+    this.intervalMinutes = 5,
+  });
+
+  final KeepAliveMode mode;
+  final int intervalMinutes;
+
+  bool get isPolling => mode == KeepAliveMode.polling;
+
+  KeepAliveConfig copyWith({
+    KeepAliveMode? mode,
+    int? intervalMinutes,
+  }) {
+    return KeepAliveConfig(
+      mode: mode ?? this.mode,
+      intervalMinutes: intervalMinutes ?? this.intervalMinutes,
+    );
+  }
+}
+
+@immutable
+class PermissionStatus {
+  const PermissionStatus({
+    required this.notifications,
+    required this.batteryOptimization,
+    required this.exactAlarm,
+    required this.fullScreenIntent,
+  });
+
+  final bool notifications;
+  final bool batteryOptimization;
+  final bool exactAlarm;
+  final bool fullScreenIntent;
+
+  static const PermissionStatus allOk = PermissionStatus(
+    notifications: true,
+    batteryOptimization: true,
+    exactAlarm: true,
+    fullScreenIntent: true,
+  );
+
+  bool get allGranted =>
+      notifications && batteryOptimization && exactAlarm && fullScreenIntent;
+
+  List<String> get missingAndroidPermissions => [
+        if (!notifications) 'notifications',
+        if (!batteryOptimization) 'battery_optimization',
+        if (!exactAlarm) 'exact_alarm',
+        if (!fullScreenIntent) 'full_screen_intent',
+      ];
+
+  factory PermissionStatus.fromMap(Map<dynamic, dynamic> map) {
+    return PermissionStatus(
+      notifications: map['notifications'] == true,
+      batteryOptimization: map['battery_optimization'] == true,
+      exactAlarm: map['exact_alarm'] == true,
+      fullScreenIntent: map['full_screen_intent'] == true,
+    );
+  }
+}
+
 @immutable
 class DinglinSource {
   const DinglinSource({
@@ -52,6 +131,7 @@ class DinglinDevice {
     required this.hasGms,
     required this.pushMode,
     required this.online,
+    this.hasFcmToken = false,
     this.lastSeenAt,
     required this.createdAt,
   });
@@ -62,6 +142,7 @@ class DinglinDevice {
   final bool hasGms;
   final String pushMode;
   final bool online;
+  final bool hasFcmToken;
   final DateTime? lastSeenAt;
   final DateTime createdAt;
 
@@ -73,6 +154,8 @@ class DinglinDevice {
       hasGms: j['has_gms'] == true,
       pushMode: (j['push_mode'] ?? 'web').toString(),
       online: j['online'] == true,
+      hasFcmToken: ((j['fcm_token'] ?? '').toString().isNotEmpty) ||
+          j['has_fcm_token'] == true,
       lastSeenAt: _parseTime(j['last_seen_at']),
       createdAt: _parseTime(j['created_at']) ?? DateTime.now().toUtc(),
     );
@@ -152,6 +235,7 @@ class DinglinNotification {
   bool get isCritical => priority == 'critical';
 
   DinglinNotification copyWith({
+    String? priority,
     String? status,
     DateTime? snoozedUntil,
     DateTime? updatedAt,
@@ -160,7 +244,7 @@ class DinglinNotification {
       id: id,
       seq: seq,
       sourceId: sourceId,
-      priority: priority,
+      priority: priority ?? this.priority,
       title: title,
       body: body,
       category: category,
@@ -488,4 +572,66 @@ String formatRelativeTime(DateTime dt, {DateTime? now}) {
     return '昨天 ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
   return '${local.month}/${local.day} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+/// Formats a local timestamp as HH:MM.
+String formatClockHm(DateTime dt) {
+  final local = dt.toLocal();
+  return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+/// Formats an upcoming trigger time cleanly relative to [now].
+String formatFutureTime(DateTime dt, {DateTime? now}) {
+  final ref = (now ?? DateTime.now()).toLocal();
+  final local = dt.toLocal();
+  final diff = local.difference(ref);
+  if (diff.inSeconds <= 0) return '即将';
+  if (diff.inMinutes < 1) return '${diff.inSeconds} 秒后';
+  if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟后';
+  final hm = formatClockHm(local);
+  final refDay = DateTime(ref.year, ref.month, ref.day);
+  final localDay = DateTime(local.year, local.month, local.day);
+  final dayDelta = localDay.difference(refDay).inDays;
+  if (dayDelta == 0) return '今天 $hm';
+  if (dayDelta == 1) return '明天 $hm';
+  return '${local.month}/${local.day} $hm';
+}
+
+const List<String> commonIanaTimezones = [
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Asia/Singapore',
+  'Asia/Bangkok',
+  'Asia/Kolkata',
+  'Asia/Dubai',
+  'Europe/London',
+  'Europe/Berlin',
+  'Europe/Paris',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Australia/Sydney',
+  'UTC',
+];
+
+String detectLocalIanaTimezone([Duration? offset]) {
+  final mins = (offset ?? DateTime.now().timeZoneOffset).inMinutes;
+  return switch (mins) {
+    480 => 'Asia/Shanghai',
+    540 => 'Asia/Tokyo',
+    420 => 'Asia/Bangkok',
+    330 => 'Asia/Kolkata',
+    240 => 'Asia/Dubai',
+    600 => 'Australia/Sydney',
+    60 => 'Europe/Berlin',
+    0 => 'UTC',
+    -300 => 'America/New_York',
+    -360 => 'America/Chicago',
+    -420 => 'America/Denver',
+    -480 => 'America/Los_Angeles',
+    _ => 'UTC',
+  };
 }

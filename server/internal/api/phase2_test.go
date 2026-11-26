@@ -160,3 +160,202 @@ func TestPhase2NotifyWebhookSyncAndIsolation(t *testing.T) {
 		t.Fatalf("expected 403 for source B reading source A receipts, got %d", rrSrcB.Code)
 	}
 }
+
+func TestPhase1DevicePushModeReadAllScheduleTypeAndDNDValidation(t *testing.T) {
+	h := setupPhase2API(t)
+
+	// Create two sources and notifications
+	createSrc := func(slug string) (string, string) {
+		rr := doJSON(t, h, http.MethodPost, "/api/v1/sources", "master-key", map[string]any{
+			"slug": slug, "name": slug, "kind": "webhook",
+		})
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("create %s: %d %s", slug, rr.Code, rr.Body.String())
+		}
+		var out struct {
+			Source struct{ ID string } `json:"source"`
+			Token  string              `json:"token"`
+		}
+		_ = json.Unmarshal(rr.Body.Bytes(), &out)
+		return out.Source.ID, out.Token
+	}
+	srcAID, srcAToken := createSrc("src-read-a")
+	_, srcBToken := createSrc("src-read-b")
+
+	// Pair Android and Web devices
+	pairDevice := func(name, platform string, hasGMS bool) string {
+		codeRR := doJSON(t, h, http.MethodPost, "/api/v1/pairing-codes", "master-key", nil)
+		var codeOut struct{ Code string `json:"code"` }
+		_ = json.Unmarshal(codeRR.Body.Bytes(), &codeOut)
+		pairRR := doJSON(t, h, http.MethodPost, "/api/v1/devices/pair", "", map[string]any{
+			"code": codeOut.Code, "name": name, "platform": platform, "has_gms": hasGMS,
+		})
+		if pairRR.Code != http.StatusCreated {
+			t.Fatalf("pair %s: %d %s", name, pairRR.Code, pairRR.Body.String())
+		}
+		var pairOut struct{ DeviceID string `json:"device_id"` }
+		_ = json.Unmarshal(pairRR.Body.Bytes(), &pairOut)
+		return pairOut.DeviceID
+	}
+
+	androidID := pairDevice("Pixel", "android", true)
+	webID := pairDevice("Chrome", "web", false)
+
+	// 1. Update device push_mode (reject fcm without fcm_token; token refresh preserves manual ws)
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/devices/"+androidID, "master-key", map[string]any{"push_mode": "fcm"}); rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 switching to fcm without fcm_token, got %d", rr.Code)
+	}
+	if rr := doJSON(t, h, http.MethodPost, "/api/v1/devices/"+androidID+"/fcm-token", "master-key", map[string]any{
+		"fcm_token": "tok-initial", "has_gms": true,
+	}); rr.Code != http.StatusOK {
+		t.Fatalf("register initial fcm token got %d: %s", rr.Code, rr.Body.String())
+	}
+	rr := doJSON(t, h, http.MethodPatch, "/api/v1/devices/"+androidID, "master-key", map[string]any{"push_mode": "ws"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set android ws got %d: %s", rr.Code, rr.Body.String())
+	}
+	var devOut struct {
+		Device struct {
+			PushMode string `json:"push_mode"`
+		} `json:"device"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &devOut)
+	if devOut.Device.PushMode != "ws" {
+		t.Fatalf("expected push_mode=ws, got %q", devOut.Device.PushMode)
+	}
+	// Token refresh without explicit push_mode must preserve manual ws override
+	rrRefresh := doJSON(t, h, http.MethodPost, "/api/v1/devices/"+androidID+"/fcm-token", "master-key", map[string]any{
+		"fcm_token": "tok-rotated", "has_gms": true,
+	})
+	if rrRefresh.Code != http.StatusOK {
+		t.Fatalf("refresh fcm token got %d: %s", rrRefresh.Code, rrRefresh.Body.String())
+	}
+	var refreshOut struct {
+		PushMode string `json:"push_mode"`
+	}
+	_ = json.Unmarshal(rrRefresh.Body.Bytes(), &refreshOut)
+	if refreshOut.PushMode != "ws" {
+		t.Fatalf("expected manual ws preserved on token refresh, got %q", refreshOut.PushMode)
+	}
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/devices/"+androidID, "master-key", map[string]any{"push_mode": "bogus"}); rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on invalid push_mode, got %d", rr.Code)
+	}
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/devices/"+webID, "master-key", map[string]any{"push_mode": "fcm"}); rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 setting fcm on web device, got %d", rr.Code)
+	}
+
+	// 2. Batch mark read-all scoped by source_id without overwriting acked status
+	rrN1 := doJSON(t, h, http.MethodPost, "/api/v1/notify", srcAToken, map[string]any{"title": "A1"})
+	var n1Out struct{ Notification struct{ ID string } `json:"notification"` }
+	_ = json.Unmarshal(rrN1.Body.Bytes(), &n1Out)
+	_ = doJSON(t, h, http.MethodPost, "/api/v1/notify", srcAToken, map[string]any{"title": "A2"})
+	_ = doJSON(t, h, http.MethodPost, "/api/v1/notify", srcBToken, map[string]any{"title": "B1"})
+	_ = doJSON(t, h, http.MethodPost, "/api/v1/notifications/"+n1Out.Notification.ID+"/receipt", "master-key", map[string]any{"action_id": "ack"})
+
+	rrReadA := doJSON(t, h, http.MethodPost, "/api/v1/notifications/read-all", "master-key", map[string]any{"source_id": srcAID})
+	if rrReadA.Code != http.StatusOK {
+		t.Fatalf("read-all srcA got %d: %s", rrReadA.Code, rrReadA.Body.String())
+	}
+	var readAOut struct{ Updated int64 `json:"updated"` }
+	_ = json.Unmarshal(rrReadA.Body.Bytes(), &readAOut)
+	if readAOut.Updated != 1 {
+		t.Fatalf("expected 1 unread in srcA updated, got %d", readAOut.Updated)
+	}
+
+	// Verify acked status preserved & sync event emitted
+	rrSync := doJSON(t, h, http.MethodGet, "/api/v1/sync?since_seq=0", "master-key", nil)
+	var syncOut struct {
+		Events []struct {
+			EventType string `json:"event_type"`
+		} `json:"events"`
+	}
+	_ = json.Unmarshal(rrSync.Body.Bytes(), &syncOut)
+	foundReadAll := false
+	for _, ev := range syncOut.Events {
+		if ev.EventType == "notifications.read_all" {
+			foundReadAll = true
+		}
+	}
+	if !foundReadAll {
+		t.Fatalf("expected notifications.read_all event in sync feed")
+	}
+
+	// 3. Schedule update switching once <-> cron
+	fireAt := time.Now().UTC().Add(2 * time.Hour)
+	rrCreateSched := doJSON(t, h, http.MethodPost, "/api/v1/schedules", "master-key", map[string]any{
+		"kind": "alarm", "title": "Standup", "schedule_type": "once", "fire_at": fireAt, "timezone": "Asia/Shanghai",
+	})
+	if rrCreateSched.Code != http.StatusCreated {
+		t.Fatalf("create schedule got %d: %s", rrCreateSched.Code, rrCreateSched.Body.String())
+	}
+	var scOut struct{ Schedule struct{ ID string } `json:"schedule"` }
+	_ = json.Unmarshal(rrCreateSched.Body.Bytes(), &scOut)
+
+	rrToCron := doJSON(t, h, http.MethodPatch, "/api/v1/schedules/"+scOut.Schedule.ID, "master-key", map[string]any{
+		"schedule_type": "cron", "cron_expr": "0 9 * * 1-5",
+	})
+	if rrToCron.Code != http.StatusOK {
+		t.Fatalf("switch once -> cron got %d: %s", rrToCron.Code, rrToCron.Body.String())
+	}
+	var scCron struct {
+		Schedule struct {
+			ScheduleType string     `json:"schedule_type"`
+			CronExpr     string     `json:"cron_expr"`
+			FireAt       *time.Time `json:"fire_at"`
+		} `json:"schedule"`
+	}
+	_ = json.Unmarshal(rrToCron.Body.Bytes(), &scCron)
+	if scCron.Schedule.ScheduleType != "cron" || scCron.Schedule.CronExpr != "0 9 * * 1-5" || scCron.Schedule.FireAt != nil {
+		t.Fatalf("unexpected cron switch result: %+v", scCron.Schedule)
+	}
+
+	rrToOnce := doJSON(t, h, http.MethodPatch, "/api/v1/schedules/"+scOut.Schedule.ID, "master-key", map[string]any{
+		"schedule_type": "once", "fire_at": fireAt,
+	})
+	if rrToOnce.Code != http.StatusOK {
+		t.Fatalf("switch cron -> once got %d: %s", rrToOnce.Code, rrToOnce.Body.String())
+	}
+	var scOnce struct {
+		Schedule struct {
+			ScheduleType string     `json:"schedule_type"`
+			CronExpr     string     `json:"cron_expr"`
+			FireAt       *time.Time `json:"fire_at"`
+		} `json:"schedule"`
+	}
+	_ = json.Unmarshal(rrToOnce.Body.Bytes(), &scOnce)
+	if scOnce.Schedule.ScheduleType != "once" || scOnce.Schedule.CronExpr != "" || scOnce.Schedule.FireAt == nil {
+		t.Fatalf("unexpected once switch result: %+v", scOnce.Schedule)
+	}
+
+	// Dismiss completed once schedule, then switch to cron -> resets to active
+	if rr := doJSON(t, h, http.MethodPost, "/api/v1/schedules/"+scOut.Schedule.ID+"/dismiss", "master-key", nil); rr.Code != http.StatusOK {
+		t.Fatalf("dismiss schedule got %d", rr.Code)
+	}
+	rrReenable := doJSON(t, h, http.MethodPatch, "/api/v1/schedules/"+scOut.Schedule.ID, "master-key", map[string]any{
+		"schedule_type": "cron", "cron_expr": "30 8 * * *",
+	})
+	if rrReenable.Code != http.StatusOK {
+		t.Fatalf("switch completed once -> cron got %d: %s", rrReenable.Code, rrReenable.Body.String())
+	}
+	var scReactivated struct {
+		Schedule struct {
+			State   string `json:"state"`
+			Enabled bool   `json:"enabled"`
+		} `json:"schedule"`
+	}
+	_ = json.Unmarshal(rrReenable.Body.Bytes(), &scReactivated)
+	if scReactivated.Schedule.State != "active" || !scReactivated.Schedule.Enabled {
+		t.Fatalf("expected reactivated cron schedule, got %+v", scReactivated.Schedule)
+	}
+
+	// 4. DND HH:MM validation
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/settings", "master-key", map[string]any{"dnd_start": "25:99"}); rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on invalid dnd_start, got %d", rr.Code)
+	}
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/settings", "master-key", map[string]any{"dnd_end": "9:00"}); rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on invalid dnd_end, got %d", rr.Code)
+	}
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/settings", "master-key", map[string]any{"dnd_start": "22:30", "dnd_end": "07:15"}); rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 on valid dnd times, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

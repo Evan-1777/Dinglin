@@ -138,6 +138,21 @@ func TestFCMTransportAndUnregisteredCleanup(t *testing.T) {
 	if fcmTok != "" || pushMode != "ws" {
 		t.Fatalf("expected cleared fcm_token and push_mode=ws, got token=%q mode=%q", fcmTok, pushMode)
 	}
+
+	// Device explicitly configured as push_mode='ws' must skip FCM even if fcm_token is present.
+	_, err = st.DB.Exec(`
+		INSERT INTO devices (id, name, platform, token_hash, fcm_token, has_gms, push_mode, created_at)
+		VALUES ('d2', 'PixelWS', 'android', 'h2', 'fcm-tok-2', 1, 'ws', ?)`, now)
+	if err != nil {
+		t.Fatalf("insert d2: %v", err)
+	}
+	returnUnregistered.Store(false)
+	ch, err = disp.SendToDevice(context.Background(), "d2", EventMessage{
+		Seq: 3, EventType: "notification.created", EntityID: "n3", Priority: "normal", Title: "WS Only",
+	})
+	if err != nil || ch != "offline" {
+		t.Fatalf("expected ws-only offline device to skip FCM and return offline, got ch=%q err=%v", ch, err)
+	}
 }
 
 func TestWSHubConcurrentConnectAndBroadcast(t *testing.T) {

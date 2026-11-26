@@ -28,6 +28,13 @@ enum AppIconName {
   edit,
   alert,
   chevronRight,
+  xCircle,
+  shield,
+  code,
+  disconnect,
+  checkCircle,
+  sliders,
+  filter,
 }
 
 /// Crisp 1.5px stroke Apple HIG SVG icon component with mandatory semantics.
@@ -147,5 +154,36 @@ class AppIcon extends StatelessWidget {
         '<line x1="12" y1="16" x2="12.01" y2="16"/>',
     AppIconName.chevronRight:
         '<polyline points="9 18 15 12 9 6"/>',
+    AppIconName.xCircle:
+        '<circle cx="12" cy="12" r="9"/>'
+        '<line x1="15" y1="9" x2="9" y2="15"/>'
+        '<line x1="9" y1="9" x2="15" y2="15"/>',
+    AppIconName.shield:
+        '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    AppIconName.code:
+        '<polyline points="16 18 22 12 16 6"/>'
+        '<polyline points="8 6 2 12 8 18"/>',
+    AppIconName.disconnect:
+        '<path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/>'
+        '<path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/>'
+        '<line x1="8" y1="2" x2="8" y2="5"/>'
+        '<line x1="2" y1="8" x2="5" y2="8"/>'
+        '<line x1="16" y1="19" x2="16" y2="22"/>'
+        '<line x1="19" y1="16" x2="22" y2="16"/>',
+    AppIconName.checkCircle:
+        '<circle cx="12" cy="12" r="9"/>'
+        '<polyline points="9 12 11 14 15 10"/>',
+    AppIconName.sliders:
+        '<line x1="4" y1="21" x2="4" y2="14"/>'
+        '<line x1="4" y1="10" x2="4" y2="3"/>'
+        '<line x1="12" y1="21" x2="12" y2="12"/>'
+        '<line x1="12" y1="8" x2="12" y2="3"/>'
+        '<line x1="20" y1="21" x2="20" y2="16"/>'
+        '<line x1="20" y1="12" x2="20" y2="3"/>'
+        '<line x1="1" y1="14" x2="7" y2="14"/>'
+        '<line x1="9" y1="8" x2="15" y2="8"/>'
+        '<line x1="17" y1="16" x2="23" y2="16"/>',
+    AppIconName.filter:
+        '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
   };
 }
