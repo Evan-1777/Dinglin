@@ -1,0 +1,13 @@
+.env
+.codegraph/
+temp/
+server/data/
+server/bin/
+server/dinglin
+*.db
+*.db-wal
+*.db-shm
+client/build/
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
