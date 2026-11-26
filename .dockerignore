@@ -1,0 +1,16 @@
+.git
+.github
+.agents
+.codebuddy
+.codegraph
+.dsh
+temp
+.env
+server/data
+server/bin
+*.db
+*.db-wal
+*.db-shm
+client/.dart_tool
+client/android
+client/build/app

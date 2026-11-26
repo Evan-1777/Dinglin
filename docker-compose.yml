@@ -1,0 +1,24 @@
+# 部署方式：拉取预构建镜像（不在本机构建）
+# 1. 在同目录创建 .env：DINGLIN_MASTER_KEY=<你的主密钥>（可选 DINGLIN_PUBLIC_URL / DINGLIN_RETENTION_DAYS）
+# 2. docker compose pull && docker compose up -d
+services:
+  dinglin:
+    image: ghcr.io/evan-1777/dinglin:latest
+    container_name: dinglin
+    restart: unless-stopped
+    pull_policy: always
+    ports:
+      - "8080:8080"
+    environment:
+      DINGLIN_MASTER_KEY: ${DINGLIN_MASTER_KEY:?请在 .env 中设置 DINGLIN_MASTER_KEY}
+      DINGLIN_DB_PATH: /data/dinglin.db
+      DINGLIN_WEB_DIST_DIR: /app/web
+      DINGLIN_PUBLIC_URL: ${DINGLIN_PUBLIC_URL:-}
+      DINGLIN_RETENTION_DAYS: ${DINGLIN_RETENTION_DAYS:-30}
+      # 可选 FCM 服务账号：同目录放置 fcm.json 后取消下一行注释并挂载
+      # DINGLIN_FCM_CREDENTIALS_FILE: /run/secrets/fcm.json
+    volumes:
+      - dinglin-data:/data
+      # - ./fcm.json:/run/secrets/fcm.json:ro
+volumes:
+  dinglin-data:
