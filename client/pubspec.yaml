@@ -1,0 +1,28 @@
+name: dinglin_client
+description: "Dinglin personal notification and time-scheduling client (Android & Web)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  web_socket_channel: ^3.0.1
+  flutter_svg: ^2.0.10+1
+  shared_preferences: ^2.3.2
+  intl: ^0.19.0
+  web: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  stream_channel: ^2.1.2
+
+flutter:
+  uses-material-design: false
+  assets:
+    - assets/icons/

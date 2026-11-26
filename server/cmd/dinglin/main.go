@@ -15,6 +15,7 @@ import (
 	"dinglin/server/internal/auth"
 	"dinglin/server/internal/callback"
 	"dinglin/server/internal/config"
+	"dinglin/server/internal/mcp"
 	"dinglin/server/internal/notify"
 	"dinglin/server/internal/push"
 	"dinglin/server/internal/schedule"
@@ -36,8 +37,12 @@ func main() {
 			os.Exit(1)
 		}
 	case "mcp-stdio":
-		fmt.Fprintln(os.Stderr, "dinglin: mcp-stdio will be implemented in Phase 3")
-		os.Exit(2)
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := mcp.RunStdio(ctx, args, os.Stdin, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "dinglin mcp-stdio: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "dinglin: unknown subcommand %q (supported: serve, mcp-stdio)\n", subcmd)
 		os.Exit(2)
@@ -91,6 +96,8 @@ func runServe(args []string) error {
 	srv.RegisterSyncAndPushRoutes(hub, dispatcher)
 	srv.RegisterScheduleRoutes(scheduleSvc)
 	srv.RegisterReceiptRoutes(callbackSvc, notifySvc)
+	mcpSrv := mcp.NewServer(authenticator, notifySvc, scheduleSvc, callbackSvc)
+	srv.RegisterRoutes(mcpSrv.RegisterRoutes)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

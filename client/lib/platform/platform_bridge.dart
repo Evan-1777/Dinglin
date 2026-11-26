@@ -1,0 +1,29 @@
+import '../models/models.dart';
+import 'platform_bridge_io.dart'
+    if (dart.library.js_interop) 'platform_bridge_web.dart' as impl;
+
+abstract class PlatformBridge {
+  factory PlatformBridge() => impl.createPlatformBridge();
+
+  String get platformName;
+
+  Future<void> initialize({
+    required String serverUrl,
+    required String authToken,
+    required String deviceId,
+  });
+
+  Future<void> syncSchedules(List<DinglinSchedule> schedules);
+
+  Future<void> showLocalNotification(DinglinNotification notification);
+
+  Future<void> stopRinging();
+
+  Future<bool> hasGms();
+
+  Future<String?> getFcmToken();
+
+  Stream<Map<String, dynamic>> get nativeEvents;
+
+  void dispose();
+}
