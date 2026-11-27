@@ -208,28 +208,7 @@ class _DesktopSidebar extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(8, 2, 6, 14),
                 child: Row(
                   children: [
-                    Container(
-                      width: 26,
-                      height: 26,
-                      decoration: BoxDecoration(
-                        color: t.accent,
-                        borderRadius: BorderRadius.circular(7),
-                        boxShadow: [
-                          BoxShadow(
-                            color: t.accent.withValues(alpha: 0.32),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      alignment: Alignment.center,
-                      child: const AppIcon(
-                        AppIconName.bell,
-                        size: 14,
-                        color: Colors.white,
-                        semanticsLabel: 'Dinglin',
-                      ),
-                    ),
+                    const DinglinBrandMark(size: 26),
                     const SizedBox(width: 9),
                     Text(
                       'Dinglin',
@@ -342,21 +321,7 @@ class _CompactRail extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: Column(
             children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  color: t.accent,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                alignment: Alignment.center,
-                child: const AppIcon(
-                  AppIconName.bell,
-                  size: 16,
-                  color: Colors.white,
-                  semanticsLabel: 'Dinglin',
-                ),
-              ),
+              const DinglinBrandMark(size: 30),
               const SizedBox(height: 18),
               AppleIconButton(
                 icon: AppIconName.bell,

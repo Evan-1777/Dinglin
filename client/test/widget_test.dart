@@ -31,7 +31,10 @@ class _FakePlatform implements PlatformBridge {
   final List<KeepAliveConfig> keepAliveConfigs = [];
   final List<String> requestedPermissions = [];
   int stopRingingCalls = 0;
+  int startAlarmRingingCalls = 0;
   int resetCursorCalls = 0;
+  bool autoStartSupported = false;
+  final List<bool> foregroundEvents = [];
 
   void emitNativeEvent(Map<String, dynamic> event) => _ctrl.add(event);
 
@@ -52,9 +55,19 @@ class _FakePlatform implements PlatformBridge {
     shownNotifications.add(notification);
   }
   @override
-  Future<void> stopRinging() async {
+  Future<void> startAlarmRinging(DinglinSchedule schedule) async {
+    startAlarmRingingCalls++;
+  }
+  @override
+  Future<void> stopRinging({String? scheduleId}) async {
     stopRingingCalls++;
   }
+  @override
+  Future<void> setAppForeground(bool foreground) async {
+    foregroundEvents.add(foreground);
+  }
+  @override
+  Future<bool> supportsAutoStartSettings() async => autoStartSupported;
   @override
   Future<bool> hasGms() async => keepAliveSupported;
   @override

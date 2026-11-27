@@ -224,8 +224,12 @@ func (s *Server) handleScheduleTriggered(w http.ResponseWriter, r *http.Request,
 		writeScheduleErr(w, err)
 		return
 	}
+	var notifVal any
+	if notif.ID != "" {
+		notifVal = notif
+	}
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"notification": notif,
+		"notification": notifVal,
 		"deduplicated": dedup,
 		"schedule":     sc,
 	})

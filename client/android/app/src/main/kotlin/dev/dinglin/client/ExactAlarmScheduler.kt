@@ -35,6 +35,53 @@ object ExactAlarmScheduler {
         }
     }
 
+    /**
+     * Schedules an immediate local snooze alarm and persists the updated active nextFireAtMs
+     * into ScheduleStore so offline reboots or syncAll calls do not cancel the snooze.
+     */
+    fun scheduleSnooze(
+        context: Context,
+        scheduleId: String,
+        title: String,
+        body: String,
+        snoozeMinutes: Int,
+        vibrate: Boolean,
+    ) {
+        val mins = snoozeMinutes.coerceAtLeast(1)
+        val triggerAtMs = System.currentTimeMillis() + mins * 60_000L
+        val existingList = ScheduleStore.loadSchedules(context).toMutableList()
+        val idx = existingList.indexOfFirst { it.id == scheduleId }
+        val snoozed = if (idx >= 0) {
+            val prev = existingList[idx]
+            prev.copy(
+                kind = "alarm",
+                title = title.ifEmpty { prev.title },
+                body = body,
+                priority = "critical",
+                nextFireAtMs = triggerAtMs,
+                snoozeMinutes = mins,
+                vibrate = vibrate,
+                enabled = true,
+                state = "active",
+            ).also { existingList[idx] = it }
+        } else {
+            LocalSchedule(
+                id = scheduleId,
+                kind = "alarm",
+                title = title.ifEmpty { "Dinglin 闹钟" },
+                body = body,
+                priority = "critical",
+                nextFireAtMs = triggerAtMs,
+                snoozeMinutes = mins,
+                vibrate = vibrate,
+                enabled = true,
+                state = "active",
+            ).also { existingList.add(it) }
+        }
+        ScheduleStore.saveSchedules(context, existingList)
+        scheduleOne(context, snoozed)
+    }
+
     fun scheduleOne(context: Context, s: LocalSchedule) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pi = buildPendingIntent(context, s)
@@ -51,13 +98,21 @@ object ExactAlarmScheduler {
                 Intent(context, MainActivity::class.java),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            am.setAlarmClock(AlarmManager.AlarmClockInfo(s.nextFireAtMs, showIntent), pi)
-            return
+            try {
+                am.setAlarmClock(AlarmManager.AlarmClockInfo(s.nextFireAtMs, showIntent), pi)
+                return
+            } catch (_: SecurityException) {
+                // Fall through to inexact wakeup if alarm permission was revoked.
+            }
         }
 
-        if (canExact) {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, s.nextFireAtMs, pi)
-        } else {
+        try {
+            if (canExact) {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, s.nextFireAtMs, pi)
+            } else {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, s.nextFireAtMs, pi)
+            }
+        } catch (_: SecurityException) {
             am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, s.nextFireAtMs, pi)
         }
     }

@@ -19,7 +19,13 @@ abstract class PlatformBridge {
 
   Future<void> showLocalNotification(DinglinNotification notification);
 
-  Future<void> stopRinging();
+  Future<void> startAlarmRinging(DinglinSchedule schedule);
+
+  Future<void> stopRinging({String? scheduleId});
+
+  Future<void> setAppForeground(bool foreground);
+
+  Future<bool> supportsAutoStartSettings();
 
   Future<bool> hasGms();
 

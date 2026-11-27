@@ -98,19 +98,26 @@ func (f *FCMTransport) Send(ctx context.Context, device domain.Device, msg Event
 		return fmt.Errorf("fcm oauth token: %w", err)
 	}
 
+	data := map[string]string{
+		"event_type": msg.EventType,
+		"entity_id":  msg.EntityID,
+		"priority":   msg.Priority,
+		"title":      msg.Title,
+		"seq":        strconv.FormatInt(msg.Seq, 10),
+	}
+	for k, v := range msg.FCMData {
+		if k != "" {
+			data[k] = v
+		}
+	}
+
 	payload := map[string]any{
 		"message": map[string]any{
 			"token": device.FCMToken,
 			"android": map[string]any{
 				"priority": "HIGH",
 			},
-			"data": map[string]string{
-				"event_type": msg.EventType,
-				"entity_id":  msg.EntityID,
-				"priority":   msg.Priority,
-				"title":      msg.Title,
-				"seq":        strconv.FormatInt(msg.Seq, 10),
-			},
+			"data": data,
 		},
 	}
 	body, err := json.Marshal(payload)

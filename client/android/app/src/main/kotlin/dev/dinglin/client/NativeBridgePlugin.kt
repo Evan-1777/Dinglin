@@ -3,7 +3,6 @@ package dev.dinglin.client
 import android.Manifest
 import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
@@ -112,9 +111,34 @@ object NativeBridgePlugin : MethodChannel.MethodCallHandler, EventChannel.Stream
                 NotificationChannels.showNotification(ctx, id, title, body, priority)
                 result.success(null)
             }
-            "stopRinging" -> {
-                ctx.stopService(Intent(ctx, AlarmRingService::class.java))
+            "startAlarmRinging" -> {
+                val id = call.argument<String>("id") ?: ""
+                val title = call.argument<String>("title") ?: "Dinglin 闹钟"
+                val body = call.argument<String>("body") ?: ""
+                val snoozeMins = (call.argument<Number>("snooze_minutes"))?.toInt() ?: 10
+                val vibrate = call.argument<Boolean>("vibrate") ?: true
+                AlarmRingService.startSafely(
+                    ctx,
+                    scheduleId = id,
+                    title = title,
+                    body = body,
+                    snoozeMinutes = snoozeMins,
+                    vibrate = vibrate,
+                )
                 result.success(null)
+            }
+            "stopRinging" -> {
+                val scheduleId = call.argument<String>("schedule_id")
+                AlarmRingService.stopIfMatching(ctx, scheduleId)
+                result.success(null)
+            }
+            "setAppForeground" -> {
+                val foreground = call.argument<Boolean>("foreground") ?: true
+                KeepAliveManager.setAppForeground(ctx, foreground)
+                result.success(null)
+            }
+            "supportsAutoStartSettings" -> {
+                result.success(PermissionHelper.hasAutoStartIntent(ctx))
             }
             "hasGms" -> {
                 val available = try {

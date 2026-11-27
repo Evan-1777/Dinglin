@@ -69,11 +69,49 @@ class IoPlatformBridge implements PlatformBridge {
   }
 
   @override
-  Future<void> stopRinging() async {
+  Future<void> startAlarmRinging(DinglinSchedule schedule) async {
     try {
-      await _method.invokeMethod('stopRinging');
+      await _method.invokeMethod('startAlarmRinging', {
+        'id': schedule.id,
+        'title': schedule.title,
+        'body': schedule.body,
+        'snooze_minutes': schedule.snoozeMinutes,
+        'vibrate': schedule.vibrate,
+      });
     } on MissingPluginException {
       // Ignore in tests.
+    }
+  }
+
+  @override
+  Future<void> stopRinging({String? scheduleId}) async {
+    try {
+      await _method.invokeMethod('stopRinging', {
+        'schedule_id': ?scheduleId,
+      });
+    } on MissingPluginException {
+      // Ignore in tests.
+    }
+  }
+
+  @override
+  Future<void> setAppForeground(bool foreground) async {
+    try {
+      await _method.invokeMethod('setAppForeground', {
+        'foreground': foreground,
+      });
+    } on MissingPluginException {
+      // Ignore in tests.
+    }
+  }
+
+  @override
+  Future<bool> supportsAutoStartSettings() async {
+    try {
+      final res = await _method.invokeMethod<bool>('supportsAutoStartSettings');
+      return res ?? false;
+    } on MissingPluginException {
+      return false;
     }
   }
 

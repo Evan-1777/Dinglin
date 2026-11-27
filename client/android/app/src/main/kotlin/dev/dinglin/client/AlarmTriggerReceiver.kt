@@ -3,7 +3,7 @@ package dev.dinglin.client
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.ContextCompat
+import android.os.PowerManager
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -11,6 +11,25 @@ import kotlin.concurrent.thread
 
 class AlarmTriggerReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        val action = intent.action
+        if (action == AlarmRingService.ACTION_STOP || action == AlarmRingService.ACTION_SNOOZE) {
+            val scheduleId = intent.getStringExtra("schedule_id") ?: ""
+            val title = intent.getStringExtra("title") ?: "Dinglin 闹钟"
+            val body = intent.getStringExtra("body") ?: ""
+            val snoozeMins = intent.getIntExtra("snooze_minutes", 10)
+            val vibrate = intent.getBooleanExtra("vibrate", true)
+            AlarmRingService.performAction(
+                context.applicationContext,
+                action,
+                scheduleId,
+                title,
+                body,
+                snoozeMins,
+                vibrate
+            )
+            return
+        }
+
         val scheduleId = intent.getStringExtra("schedule_id") ?: return
         val kind = intent.getStringExtra("kind") ?: "scheduled_notification"
         val title = intent.getStringExtra("title") ?: "Dinglin 提醒"
@@ -21,28 +40,50 @@ class AlarmTriggerReceiver : BroadcastReceiver() {
         val vibrate = intent.getBooleanExtra("vibrate", true)
 
         val occKey = "sched:$scheduleId:$fireTs"
-        reportTriggeredAsync(context, scheduleId, occKey)
+        reportTriggeredAsync(context.applicationContext, scheduleId, occKey)
 
-        if (kind == "alarm" || priority == "critical") {
-            val svcIntent = Intent(context, AlarmRingService::class.java).apply {
-                putExtra("schedule_id", scheduleId)
-                putExtra("title", title)
-                putExtra("body", body)
-                putExtra("snooze_minutes", snoozeMinutes)
-                putExtra("vibrate", vibrate)
+        // Strictly separate alarms from notifications: only kind == "alarm" starts AlarmRingService.
+        if (kind == "alarm") {
+            val handoffLock = acquireHandoffWakeLock(context)
+            try {
+                AlarmRingService.startSafely(
+                    context.applicationContext,
+                    scheduleId = scheduleId,
+                    title = title,
+                    body = body,
+                    snoozeMinutes = snoozeMinutes,
+                    vibrate = vibrate,
+                )
+            } finally {
+                try {
+                    if (handoffLock?.isHeld == true) handoffLock.release()
+                } catch (_: Throwable) {
+                }
             }
-            ContextCompat.startForegroundService(context, svcIntent)
         } else {
-            NotificationChannels.showNotification(context, scheduleId, title, body, priority)
+            NotificationChannels.showNotification(context.applicationContext, scheduleId, title, body, priority)
         }
 
         NativeBridgePlugin.emitEvent(
             mapOf(
                 "type" to "schedule_fired",
                 "schedule_id" to scheduleId,
+                "kind" to kind,
                 "occurrence_key" to occKey,
             )
         )
+    }
+
+    private fun acquireHandoffWakeLock(context: Context): PowerManager.WakeLock? {
+        return try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dinglin:alarm-handoff").apply {
+                setReferenceCounted(false)
+                acquire(15_000L)
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     companion object {

@@ -15,12 +15,13 @@ var ErrInvalidFCMToken = errors.New("invalid or unregistered fcm token")
 
 // EventMessage is the normalized push payload routed over WS or FCM.
 type EventMessage struct {
-	Seq       int64           `json:"seq"`
-	EventType string          `json:"event_type"`
-	EntityID  string          `json:"entity_id"`
-	Priority  string          `json:"priority,omitempty"`
-	Title     string          `json:"title,omitempty"`
-	Data      json.RawMessage `json:"data"`
+	Seq       int64             `json:"seq"`
+	EventType string            `json:"event_type"`
+	EntityID  string            `json:"entity_id"`
+	Priority  string            `json:"priority,omitempty"`
+	Title     string            `json:"title,omitempty"`
+	Data      json.RawMessage   `json:"data"`
+	FCMData   map[string]string `json:"-"`
 }
 
 // Transport delivers a push message to a single offline device.

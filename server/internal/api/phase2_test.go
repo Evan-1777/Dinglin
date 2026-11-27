@@ -359,3 +359,148 @@ func TestPhase1DevicePushModeReadAllScheduleTypeAndDNDValidation(t *testing.T) {
 		t.Fatalf("expected 200 on valid dnd times, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestNotificationDeleteBatchClearReadAndAlarmTriggeredNil(t *testing.T) {
+	h := setupPhase2API(t)
+
+	createSrc := func(slug string) (string, string) {
+		rr := doJSON(t, h, http.MethodPost, "/api/v1/sources", "master-key", map[string]any{
+			"slug": slug, "name": slug, "kind": "webhook",
+		})
+		var out struct {
+			Source struct{ ID string } `json:"source"`
+			Token  string              `json:"token"`
+		}
+		_ = json.Unmarshal(rr.Body.Bytes(), &out)
+		return out.Source.ID, out.Token
+	}
+	srcAID, srcAToken := createSrc("batch-a")
+	_, srcBToken := createSrc("batch-b")
+
+	send := func(tok, title string) string {
+		rr := doJSON(t, h, http.MethodPost, "/api/v1/notify", tok, map[string]any{"title": title})
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("notify %s: %d %s", title, rr.Code, rr.Body.String())
+		}
+		var out struct {
+			Notification struct{ ID string } `json:"notification"`
+		}
+		_ = json.Unmarshal(rr.Body.Bytes(), &out)
+		return out.Notification.ID
+	}
+
+	n1 := send(srcAToken, "N1")
+	n2 := send(srcAToken, "N2")
+	n3 := send(srcAToken, "N3")
+	n4 := send(srcBToken, "N4")
+
+	// Unauthorized access rejected
+	if rr := doJSON(t, h, http.MethodDelete, "/api/v1/notifications/"+n1, "", nil); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on unauth delete, got %d", rr.Code)
+	}
+	if rr := doJSON(t, h, http.MethodPost, "/api/v1/notifications/batch", "", map[string]any{"action": "read", "ids": []string{n1}}); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on unauth batch, got %d", rr.Code)
+	}
+
+	// Single delete 404 & 200
+	if rr := doJSON(t, h, http.MethodDelete, "/api/v1/notifications/missing-id", "master-key", nil); rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on missing delete, got %d", rr.Code)
+	}
+	if rr := doJSON(t, h, http.MethodDelete, "/api/v1/notifications/"+n1, "master-key", nil); rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 on delete n1, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Batch validation errors
+	if rr := doJSON(t, h, http.MethodPost, "/api/v1/notifications/batch", "master-key", map[string]any{"action": "bogus", "ids": []string{n2}}); rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on invalid action, got %d", rr.Code)
+	}
+	if rr := doJSON(t, h, http.MethodPost, "/api/v1/notifications/batch", "master-key", map[string]any{"action": "read", "ids": []string{}}); rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on empty ids, got %d", rr.Code)
+	}
+
+	// Batch read -> unread -> read
+	rrBatchRead := doJSON(t, h, http.MethodPost, "/api/v1/notifications/batch", "master-key", map[string]any{
+		"action": "read", "ids": []string{n2, n3, n4},
+	})
+	if rrBatchRead.Code != http.StatusOK {
+		t.Fatalf("batch read got %d: %s", rrBatchRead.Code, rrBatchRead.Body.String())
+	}
+	var batchOut struct {
+		Affected int64 `json:"affected"`
+	}
+	_ = json.Unmarshal(rrBatchRead.Body.Bytes(), &batchOut)
+	if batchOut.Affected != 3 {
+		t.Fatalf("expected 3 affected on batch read, got %d", batchOut.Affected)
+	}
+
+	rrBatchUnread := doJSON(t, h, http.MethodPost, "/api/v1/notifications/batch", "master-key", map[string]any{
+		"action": "unread", "ids": []string{n3},
+	})
+	if rrBatchUnread.Code != http.StatusOK {
+		t.Fatalf("batch unread got %d", rrBatchUnread.Code)
+	}
+
+	// Clear read scoped to srcA -> deletes only n2 (n3 is unread, n4 belongs to srcB)
+	rrClearA := doJSON(t, h, http.MethodPost, "/api/v1/notifications/clear-read", "master-key", map[string]any{
+		"source_id": srcAID,
+	})
+	if rrClearA.Code != http.StatusOK {
+		t.Fatalf("clear-read srcA got %d: %s", rrClearA.Code, rrClearA.Body.String())
+	}
+	var clearOut struct {
+		Deleted int64 `json:"deleted"`
+	}
+	_ = json.Unmarshal(rrClearA.Body.Bytes(), &clearOut)
+	if clearOut.Deleted != 1 {
+		t.Fatalf("expected 1 read deleted in srcA, got %d", clearOut.Deleted)
+	}
+
+	// Batch delete remaining n3 and n4
+	rrBatchDel := doJSON(t, h, http.MethodPost, "/api/v1/notifications/batch", "master-key", map[string]any{
+		"action": "delete", "ids": []string{n3, n4},
+	})
+	if rrBatchDel.Code != http.StatusOK {
+		t.Fatalf("batch delete got %d", rrBatchDel.Code)
+	}
+
+	// Verify sync events emitted in order
+	rrSync := doJSON(t, h, http.MethodGet, "/api/v1/sync?since_seq=0", "master-key", nil)
+	var syncOut struct {
+		Events []struct {
+			EventType string `json:"event_type"`
+		} `json:"events"`
+	}
+	_ = json.Unmarshal(rrSync.Body.Bytes(), &syncOut)
+	seen := map[string]bool{}
+	for _, ev := range syncOut.Events {
+		seen[ev.EventType] = true
+	}
+	for _, want := range []string{"notification.deleted", "notifications.batch_updated", "notifications.cleared_read", "notifications.batch_deleted"} {
+		if !seen[want] {
+			t.Fatalf("missing sync event %q in %+v", want, seen)
+		}
+	}
+
+	// Triggering an alarm via REST returns notification: null and state: ringing
+	past := time.Now().UTC().Add(-time.Minute)
+	rrAlarm := doJSON(t, h, http.MethodPost, "/api/v1/schedules", "master-key", map[string]any{
+		"kind": "alarm", "title": "Wake", "schedule_type": "once", "fire_at": past,
+	})
+	var created struct {
+		Schedule struct{ ID string } `json:"schedule"`
+	}
+	_ = json.Unmarshal(rrAlarm.Body.Bytes(), &created)
+	rrTrig := doJSON(t, h, http.MethodPost, "/api/v1/schedules/"+created.Schedule.ID+"/triggered", "master-key", map[string]any{})
+	if rrTrig.Code != http.StatusOK {
+		t.Fatalf("alarm triggered got %d: %s", rrTrig.Code, rrTrig.Body.String())
+	}
+	var trigOut map[string]any
+	_ = json.Unmarshal(rrTrig.Body.Bytes(), &trigOut)
+	if trigOut["notification"] != nil {
+		t.Fatalf("expected notification=nil for alarm trigger, got %+v", trigOut["notification"])
+	}
+	scMap := trigOut["schedule"].(map[string]any)
+	if scMap["state"] != "ringing" {
+		t.Fatalf("expected schedule state=ringing, got %+v", scMap["state"])
+	}
+}

@@ -10,10 +10,8 @@ class KeepAliveSyncReceiver : BroadcastReceiver() {
         val pending = goAsync()
         thread(name = "dinglin-keepalive-poll") {
             try {
-                KeepAliveManager.syncOnceBackground(context)
-                if (ScheduleStore.keepAliveMode(context) == "polling") {
-                    KeepAliveManager.scheduleNextPoll(context, ScheduleStore.keepAliveIntervalMin(context))
-                }
+                KeepAliveManager.syncOnceBackground(context.applicationContext)
+                KeepAliveManager.apply(context.applicationContext)
             } finally {
                 pending.finish()
             }

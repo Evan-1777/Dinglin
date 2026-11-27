@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="58%" stop-color="#F4F7FC"/>
+      <stop offset="100%" stop-color="#E8EFF8"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#CFDCEB" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="bell" x1="25%" y1="10%" x2="80%" y2="95%">
+      <stop offset="0%" stop-color="#2184FF"/>
+      <stop offset="52%" stop-color="#0A66FF"/>
+      <stop offset="100%" stop-color="#004ECF"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect x="2" y="2" width="508" height="508" rx="114" fill="none" stroke="url(#rim)" stroke-width="4"/>
+  <!-- Top crown -->
+  <circle cx="256" cy="142" r="15" fill="#0A66FF"/>
+  <!-- Geometric resonance bell -->
+  <path d="M 256 150 C 202 150 170 188 170 242 L 170 296 C 170 314 160 326 146 334 C 141 337 139 343 141 348 C 143 353 148 356 154 356 L 358 356 C 364 356 369 353 371 348 C 373 343 371 337 366 334 C 352 326 342 314 342 296 L 342 242 C 342 188 310 150 256 150 Z" fill="url(#bell)"/>
+  <!-- Subtle inner specular arc -->
+  <path d="M 252 166 C 210 168 188 198 188 242 L 188 286 C 188 292 194 294 198 288 C 204 276 206 258 206 242 C 206 206 224 182 254 176 C 260 175 258 166 252 166 Z" fill="url(#gloss)"/>
+  <!-- Clapper -->
+  <path d="M 226 372 C 229 389 241 400 256 400 C 271 400 283 389 286 372 Z" fill="#0051D5"/>
+  <!-- Acoustic pulse arcs -->
+  <path d="M 332 152 A 52 52 0 0 1 360 198" fill="none" stroke="#0A66FF" stroke-width="14" stroke-linecap="round" opacity="0.88"/>
+  <path d="M 346 136 A 74 74 0 0 1 382 194" fill="none" stroke="#3B8BFF" stroke-width="11" stroke-linecap="round" opacity="0.48"/>
+</svg>

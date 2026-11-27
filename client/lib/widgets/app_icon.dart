@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show Theme;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -186,4 +187,51 @@ class AppIcon extends StatelessWidget {
     AppIconName.filter:
         '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
   };
+}
+
+/// Pure light-surface Dinglin brand emblem rendered from the single SVG source.
+class DinglinBrandMark extends StatelessWidget {
+  const DinglinBrandMark({
+    super.key,
+    this.size = 28,
+    this.semanticsLabel = 'Dinglin',
+  });
+
+  final double size;
+  final String semanticsLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = size * 0.23;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        border: isDark
+            ? Border.all(color: const Color(0x33FFFFFF), width: 0.5)
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? const Color(0x52000000)
+                : const Color(0x1A0A66FF),
+            blurRadius: size * 0.25,
+            offset: Offset(0, size * 0.08),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: SvgPicture.asset(
+          'assets/icons/dinglin_logo.svg',
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          semanticsLabel: semanticsLabel,
+        ),
+      ),
+    );
+  }
 }

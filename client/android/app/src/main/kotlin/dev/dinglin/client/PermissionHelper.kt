@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,6 +18,32 @@ import androidx.core.content.ContextCompat
 
 object PermissionHelper {
     const val REQ_POST_NOTIFICATIONS = 0x4449
+
+    // Curated 4 stable OEM auto-start entry points; every package is declared in AndroidManifest <queries>.
+    private val autoStartComponents = listOf(
+        ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
+        ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+        ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
+        ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"),
+    )
+
+    fun hasAutoStartIntent(context: Context): Boolean {
+        return resolveAutoStartIntent(context) != null
+    }
+
+    private fun resolveAutoStartIntent(context: Context): Intent? {
+        val pm = context.packageManager
+        for (component in autoStartComponents) {
+            val intent = Intent().setComponent(component)
+            val resolved = try {
+                pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            } catch (_: Throwable) {
+                null
+            }
+            if (resolved != null) return intent
+        }
+        return null
+    }
 
     fun getStatus(context: Context): Map<String, Boolean> {
         val notifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -63,7 +90,7 @@ object PermissionHelper {
         onAsyncResult: (Boolean) -> Unit,
     ): Boolean {
         val status = getStatus(context)
-        if (status[permission] == true) {
+        if (permission != "auto_start" && status[permission] == true) {
             onAsyncResult(true)
             return true
         }
@@ -114,6 +141,19 @@ object PermissionHelper {
                     )
                 }
                 onAsyncResult(getStatus(context)["full_screen_intent"] == true)
+                true
+            }
+            "auto_start" -> {
+                val target = resolveAutoStartIntent(context)
+                val opened = (target != null && startSafely(context, target)) ||
+                    startSafely(
+                        context,
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                onAsyncResult(opened)
                 true
             }
             else -> {

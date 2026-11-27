@@ -388,6 +388,46 @@ func TestEndToEndFullLoop(t *testing.T) {
 	if !strings.Contains(string(recRaw), "snooze") {
 		t.Fatalf("mcp get_notification_receipts failed: %s", recRaw)
 	}
+
+	// === Scenario 7: Alarm ringing isolation & notification batch/delete/clear-read ===
+	pastAlarm := time.Now().UTC().Add(-time.Minute)
+	resp, raw = doJSON(t, http.MethodPost, ts.URL+"/api/v1/schedules", devAndroid.Token, map[string]any{
+		"kind": "alarm", "title": "E2E Alarm", "schedule_type": "once", "fire_at": pastAlarm,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create alarm: %d %s", resp.StatusCode, raw)
+	}
+	var e2eAlarm struct {
+		Schedule domain.Schedule `json:"schedule"`
+	}
+	_ = json.Unmarshal(raw, &e2eAlarm)
+
+	notifsBefore, _ := notifySvc.List(ctx, notify.ListFilter{IncludeExpired: true})
+	resp, raw = doJSON(t, http.MethodPost, ts.URL+"/api/v1/schedules/"+e2eAlarm.Schedule.ID+"/triggered", devAndroid.Token, map[string]any{})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("trigger e2e alarm: %d %s", resp.StatusCode, raw)
+	}
+	notifsAfter, _ := notifySvc.List(ctx, notify.ListFilter{IncludeExpired: true})
+	if len(notifsAfter) != len(notifsBefore) {
+		t.Fatalf("alarm trigger must not create notifications: before=%d after=%d", len(notifsBefore), len(notifsAfter))
+	}
+	resp, _ = doJSON(t, http.MethodPost, ts.URL+"/api/v1/schedules/"+e2eAlarm.Schedule.ID+"/dismiss", devAndroid.Token, map[string]any{})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dismiss e2e alarm: %d", resp.StatusCode)
+	}
+
+	// Batch read & delete via REST
+	resp, _ = doJSON(t, http.MethodPost, ts.URL+"/api/v1/notifications/batch", devAndroid.Token, map[string]any{
+		"action": "read",
+		"ids":    []string{n1.Notification.ID},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("e2e batch read: %d", resp.StatusCode)
+	}
+	resp, _ = doJSON(t, http.MethodDelete, ts.URL+"/api/v1/notifications/"+n1.Notification.ID, devAndroid.Token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("e2e delete notif: %d", resp.StatusCode)
+	}
 }
 
 func jsonNumber(v int64) string {

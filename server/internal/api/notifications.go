@@ -28,6 +28,15 @@ func (s *Server) RegisterNotificationRoutes(notifySvc *notify.Service) {
 		mux.Handle("POST /api/v1/notifications/read-all", s.auth.RequireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			s.handleMarkAllRead(w, r, notifySvc)
 		})))
+		mux.Handle("DELETE /api/v1/notifications/{id}", s.auth.RequireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.handleDeleteNotification(w, r, notifySvc)
+		})))
+		mux.Handle("POST /api/v1/notifications/batch", s.auth.RequireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.handleBatchNotifications(w, r, notifySvc)
+		})))
+		mux.Handle("POST /api/v1/notifications/clear-read", s.auth.RequireOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.handleClearReadNotifications(w, r, notifySvc)
+		})))
 	})
 }
 
@@ -202,6 +211,59 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request, notif
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"updated": count})
+}
+
+func (s *Server) handleDeleteNotification(w http.ResponseWriter, r *http.Request, notifySvc *notify.Service) {
+	id := r.PathValue("id")
+	if err := notifySvc.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, notify.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
+}
+
+func (s *Server) handleBatchNotifications(w http.ResponseWriter, r *http.Request, notifySvc *notify.Service) {
+	var req struct {
+		Action string   `json:"action"`
+		Ids    []string `json:"ids"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	affected, err := notifySvc.BatchAction(r.Context(), req.Action, req.Ids)
+	if err != nil {
+		if errors.Is(err, notify.ErrValidation) {
+			WriteError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"action":   strings.ToLower(strings.TrimSpace(req.Action)),
+		"affected": affected,
+	})
+}
+
+func (s *Server) handleClearReadNotifications(w http.ResponseWriter, r *http.Request, notifySvc *notify.Service) {
+	var req struct {
+		SourceID string `json:"source_id"`
+	}
+	if err := DecodeJSON(r, &req); err != nil && err.Error() != "empty request body" {
+		WriteError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	deleted, err := notifySvc.ClearRead(r.Context(), req.SourceID)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
 
 func firstString(m map[string]any, keys ...string) string {

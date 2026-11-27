@@ -54,6 +54,7 @@ func TestFCMTransportAndUnregisteredCleanup(t *testing.T) {
 	var returnUnregistered atomic.Bool
 	var oauthCalls atomic.Int32
 	var gotPriority string
+	var gotData map[string]string
 
 	mockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -81,6 +82,7 @@ func TestFCMTransportAndUnregisteredCleanup(t *testing.T) {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			gotPriority = body.Message.Android["priority"]
+			gotData = body.Message.Data
 			if returnUnregistered.Load() {
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = w.Write([]byte(`{"error":{"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}`))
@@ -112,13 +114,24 @@ func TestFCMTransportAndUnregisteredCleanup(t *testing.T) {
 	disp := NewDispatcher(st, hub, fcm)
 
 	ch, err := disp.SendToDevice(context.Background(), "d1", EventMessage{
-		Seq: 1, EventType: "notification.created", EntityID: "n1", Priority: "critical", Title: "Alert",
+		Seq: 1, EventType: "schedule.upsert", EntityID: "sc1", Priority: "critical", Title: "Wake Up",
+		FCMData: map[string]string{
+			"schedule_kind":  "alarm",
+			"schedule_state": "ringing",
+			"body":           "Get up",
+			"snooze_minutes": "10",
+			"vibrate":        "true",
+		},
 	})
 	if err != nil || ch != "fcm" {
 		t.Fatalf("expected fcm delivery, got ch=%q err=%v", ch, err)
 	}
 	if gotPriority != "HIGH" {
 		t.Fatalf("expected android priority HIGH, got %q", gotPriority)
+	}
+	if gotData["schedule_kind"] != "alarm" || gotData["schedule_state"] != "ringing" ||
+		gotData["body"] != "Get up" || gotData["snooze_minutes"] != "10" || gotData["vibrate"] != "true" {
+		t.Fatalf("expected FCMData forwarded into data map, got %+v", gotData)
 	}
 
 	// Second call reuses cached OAuth token and clears invalid token on UNREGISTERED

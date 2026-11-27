@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,7 +194,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Schedule, 
 		return domain.Schedule{}, err
 	}
 
-	s.broadcast(ctx, seq, "schedule.upsert", sched.ID, sched.Priority, sched.Title, payloadRaw)
+	s.broadcast(ctx, seq, "schedule.upsert", sched.ID, sched.Priority, sched.Title, payloadRaw, scheduleFCMData(sched))
 	return sched, nil
 }
 
@@ -312,6 +313,13 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain
 			(in.FireAt != nil && in.FireAt.After(time.Now().UTC()))) {
 		sched.Enabled = true
 	}
+	if sched.State == domain.ScheduleStateRinging {
+		if !sched.Enabled && sched.ScheduleType == domain.ScheduleTypeOnce {
+			sched.State = domain.ScheduleStateCompleted
+		} else {
+			sched.State = domain.ScheduleStateActive
+		}
+	}
 	if sched.Enabled && sched.State == domain.ScheduleStateCompleted {
 		sched.State = domain.ScheduleStateActive
 	}
@@ -334,6 +342,13 @@ func (s *Service) Toggle(ctx context.Context, id string, enabled *bool) (domain.
 		sched.Enabled = *enabled
 	} else {
 		sched.Enabled = !sched.Enabled
+	}
+	if sched.State == domain.ScheduleStateRinging {
+		if !sched.Enabled && sched.ScheduleType == domain.ScheduleTypeOnce {
+			sched.State = domain.ScheduleStateCompleted
+		} else {
+			sched.State = domain.ScheduleStateActive
+		}
 	}
 	if sched.Enabled && (sched.State == domain.ScheduleStateCompleted || sched.State == domain.ScheduleStateCancelled) {
 		sched.State = domain.ScheduleStateActive
@@ -477,7 +492,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.broadcast(ctx, seq, "schedule.delete", id, "", "", payloadRaw)
+	s.broadcast(ctx, seq, "schedule.delete", id, "", "", payloadRaw, nil)
 	return nil
 }
 
@@ -548,6 +563,23 @@ func (s *Service) StartScanner(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Service) triggerSchedule(ctx context.Context, sched domain.Schedule, occurrenceKey string, now time.Time) (domain.Notification, bool, domain.Schedule, error) {
+	if sched.Kind == domain.ScheduleKindAlarm {
+		if sched.State == domain.ScheduleStateRinging || !sched.Enabled || sched.State != domain.ScheduleStateActive {
+			return domain.Notification{}, true, sched, nil
+		}
+		if sched.NextFireAt != nil && sched.NextFireAt.After(now.Add(30*time.Second)) {
+			return domain.Notification{}, true, sched, nil
+		}
+		sched.State = domain.ScheduleStateRinging
+		sched.NextFireAt = nil
+		sched.Priority = domain.PriorityCritical
+		updated, err := s.persistUpdate(ctx, sched, time.Now().UTC())
+		if err != nil {
+			return domain.Notification{}, false, sched, err
+		}
+		return domain.Notification{}, false, updated, nil
+	}
+
 	in := notify.CreateInput{
 		SourceID:      sched.SourceID,
 		OccurrenceKey: occurrenceKey,
@@ -640,8 +672,23 @@ func (s *Service) persistUpdate(ctx context.Context, sched domain.Schedule, now 
 		return domain.Schedule{}, err
 	}
 
-	s.broadcast(ctx, seq, "schedule.upsert", sched.ID, sched.Priority, sched.Title, payloadRaw)
+	s.broadcast(ctx, seq, "schedule.upsert", sched.ID, sched.Priority, sched.Title, payloadRaw, scheduleFCMData(sched))
 	return sched, nil
+}
+
+func scheduleFCMData(sched domain.Schedule) map[string]string {
+	data := map[string]string{
+		"schedule_kind":  sched.Kind,
+		"schedule_state": sched.State,
+	}
+	if sched.Kind == domain.ScheduleKindAlarm && sched.State == domain.ScheduleStateRinging {
+		if sched.Body != "" {
+			data["body"] = sched.Body
+		}
+		data["snooze_minutes"] = strconv.Itoa(sched.SnoozeMinutes)
+		data["vibrate"] = strconv.FormatBool(sched.Vibrate)
+	}
+	return data
 }
 
 func emitScheduleEventTx(ctx context.Context, tx *sql.Tx, eventType string, sched *domain.Schedule, now time.Time) (int64, json.RawMessage, error) {
@@ -660,7 +707,7 @@ func emitScheduleEventTx(ctx context.Context, tx *sql.Tx, eventType string, sche
 	return seq, payloadRaw, nil
 }
 
-func (s *Service) broadcast(ctx context.Context, seq int64, eventType, entityID, priority, title string, data json.RawMessage) {
+func (s *Service) broadcast(ctx context.Context, seq int64, eventType, entityID, priority, title string, data json.RawMessage, fcmData map[string]string) {
 	if s.dispatcher != nil {
 		s.dispatcher.Broadcast(ctx, push.EventMessage{
 			Seq:       seq,
@@ -669,6 +716,7 @@ func (s *Service) broadcast(ctx context.Context, seq int64, eventType, entityID,
 			Priority:  priority,
 			Title:     title,
 			Data:      data,
+			FCMData:   fcmData,
 		})
 	}
 }

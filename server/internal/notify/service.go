@@ -177,6 +177,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Notificati
 	}
 
 	if s.dispatcher != nil {
+		fcmData := map[string]string{}
+		if notif.Body != "" {
+			fcmData["body"] = notif.Body
+		}
 		s.dispatcher.Broadcast(ctx, push.EventMessage{
 			Seq:       seq,
 			EventType: "notification.created",
@@ -184,6 +188,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Notificati
 			Priority:  notif.Priority,
 			Title:     notif.Title,
 			Data:      payloadRaw,
+			FCMData:   fcmData,
 		})
 	}
 
@@ -310,6 +315,220 @@ func (s *Service) MarkAllRead(ctx context.Context, sourceID string) (int64, erro
 		s.dispatcher.Broadcast(ctx, push.EventMessage{
 			Seq:       seq,
 			EventType: "notifications.read_all",
+			EntityID:  entityID,
+			Data:      payloadRaw,
+		})
+	}
+	return count, nil
+}
+
+// Delete removes a single notification (cascading receipts and callback_jobs) and emits notification.deleted.
+func (s *Service) Delete(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrNotFound
+	}
+	now := time.Now().UTC()
+	tx, err := s.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM notifications WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+
+	payload := map[string]any{
+		"id":         id,
+		"deleted_at": now,
+	}
+	seq, payloadRaw, err := store.AppendSyncEventTx(ctx, tx, "notification.deleted", id, payload, now)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if s.dispatcher != nil {
+		s.dispatcher.Broadcast(ctx, push.EventMessage{
+			Seq:       seq,
+			EventType: "notification.deleted",
+			EntityID:  id,
+			Data:      payloadRaw,
+		})
+	}
+	return nil
+}
+
+// BatchAction performs batch read, unread, or delete on 1..200 notifications in a single transaction.
+func (s *Service) BatchAction(ctx context.Context, action string, ids []string) (int64, error) {
+	action = strings.ToLower(strings.TrimSpace(action))
+	switch action {
+	case "read", "unread", "delete":
+	default:
+		return 0, fmt.Errorf("%w: unsupported batch action %q", ErrValidation, action)
+	}
+
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, raw := range ids {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; !ok {
+			seen[trimmed] = struct{}{}
+			unique = append(unique, trimmed)
+		}
+	}
+	if len(unique) == 0 || len(unique) > 200 {
+		return 0, fmt.Errorf("%w: ids must contain between 1 and 200 items", ErrValidation)
+	}
+
+	now := time.Now().UTC()
+	tx, err := s.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(unique)), ",")
+	var (
+		affected  int64
+		eventType string
+		payload   map[string]any
+	)
+
+	if action == "delete" {
+		args := make([]any, 0, len(unique))
+		for _, id := range unique {
+			args = append(args, id)
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM notifications WHERE id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return 0, err
+		}
+		affected, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		eventType = "notifications.batch_deleted"
+		payload = map[string]any{
+			"ids":        unique,
+			"count":      affected,
+			"updated_at": now,
+		}
+	} else {
+		targetStatus := domain.NotificationStatusRead
+		if action == "unread" {
+			targetStatus = domain.NotificationStatusUnread
+		}
+		args := make([]any, 0, len(unique)+3)
+		args = append(args, targetStatus, now.Unix())
+		for _, id := range unique {
+			args = append(args, id)
+		}
+		args = append(args, targetStatus)
+		res, err := tx.ExecContext(ctx,
+			`UPDATE notifications SET status = ?, updated_at = ? WHERE id IN (`+placeholders+`) AND status != ?`,
+			args...,
+		)
+		if err != nil {
+			return 0, err
+		}
+		affected, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		eventType = "notifications.batch_updated"
+		payload = map[string]any{
+			"ids":        unique,
+			"status":     targetStatus,
+			"count":      affected,
+			"updated_at": now,
+		}
+	}
+
+	if affected == 0 {
+		return 0, nil
+	}
+
+	seq, payloadRaw, err := store.AppendSyncEventTx(ctx, tx, eventType, "batch", payload, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if s.dispatcher != nil {
+		s.dispatcher.Broadcast(ctx, push.EventMessage{
+			Seq:       seq,
+			EventType: eventType,
+			EntityID:  "batch",
+			Data:      payloadRaw,
+		})
+	}
+	return affected, nil
+}
+
+// ClearRead deletes all non-unread notifications (optionally scoped by sourceID) and emits notifications.cleared_read.
+func (s *Service) ClearRead(ctx context.Context, sourceID string) (int64, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	now := time.Now().UTC()
+
+	tx, err := s.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	query := `DELETE FROM notifications WHERE status != ?`
+	args := []any{domain.NotificationStatusUnread}
+	if sourceID != "" {
+		query += ` AND source_id = ?`
+		args = append(args, sourceID)
+	}
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if count == 0 {
+		return 0, nil
+	}
+
+	entityID := sourceID
+	if entityID == "" {
+		entityID = "all"
+	}
+	payload := map[string]any{
+		"source_id":  sourceID,
+		"count":      count,
+		"updated_at": now,
+	}
+	seq, payloadRaw, err := store.AppendSyncEventTx(ctx, tx, "notifications.cleared_read", entityID, payload, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if s.dispatcher != nil {
+		s.dispatcher.Broadcast(ctx, push.EventMessage{
+			Seq:       seq,
+			EventType: "notifications.cleared_read",
 			EntityID:  entityID,
 			Data:      payloadRaw,
 		})

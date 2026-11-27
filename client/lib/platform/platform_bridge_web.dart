@@ -24,6 +24,10 @@ class WebPlatformBridge implements PlatformBridge {
       StreamController<Map<String, dynamic>>.broadcast();
   final Map<String, Timer> _foregroundTimers = {};
 
+  Timer? _alarmRingTimer;
+  web.AudioContext? _alarmAudioCtx;
+  String? _ringingScheduleId;
+
   @override
   String get platformName => 'web';
 
@@ -52,11 +56,20 @@ class WebPlatformBridge implements PlatformBridge {
       final delay = s.nextFireAt!.difference(now);
       if (delay.isNegative || delay.inHours > 24) continue;
       _foregroundTimers[s.id] = Timer(delay, () {
-        _playBeep(s.priority == 'critical');
-        _emitWebNotification(s.title, s.body);
+        if (s.kind == 'alarm') {
+          startAlarmRinging(s);
+          _eventCtrl.add({
+            'type': 'alarm_ringing',
+            'schedule_id': s.id,
+          });
+        } else {
+          _playBeep(s.priority == 'critical');
+          _emitWebNotification(s.title, s.body);
+        }
         _eventCtrl.add({
           'type': 'schedule_fired',
           'schedule_id': s.id,
+          'kind': s.kind,
         });
       });
     }
@@ -68,6 +81,68 @@ class WebPlatformBridge implements PlatformBridge {
       _playBeep(notification.isCritical);
     }
     _emitWebNotification(notification.title, notification.body);
+  }
+
+  @override
+  Future<void> startAlarmRinging(DinglinSchedule schedule) async {
+    _stopAlarmLoop();
+    _ringingScheduleId = schedule.id;
+    _playAlarmPulse();
+    _alarmRingTimer = Timer.periodic(
+      const Duration(milliseconds: 1800),
+      (_) => _playAlarmPulse(),
+    );
+  }
+
+  @override
+  Future<void> stopRinging({String? scheduleId}) async {
+    if (scheduleId != null &&
+        _ringingScheduleId != null &&
+        _ringingScheduleId != scheduleId) {
+      return;
+    }
+    _stopAlarmLoop();
+  }
+
+  @override
+  Future<void> setAppForeground(bool foreground) async {}
+
+  @override
+  Future<bool> supportsAutoStartSettings() async => false;
+
+  void _stopAlarmLoop() {
+    _alarmRingTimer?.cancel();
+    _alarmRingTimer = null;
+    _ringingScheduleId = null;
+    try {
+      _alarmAudioCtx?.close();
+    } catch (_) {}
+    _alarmAudioCtx = null;
+  }
+
+  void _playAlarmPulse() {
+    try {
+      final ctx = _alarmAudioCtx ??= web.AudioContext();
+      if (ctx.state == 'suspended') {
+        ctx.resume();
+      }
+      final now = ctx.currentTime;
+      for (final offset in const [0.0, 0.24]) {
+        final osc = ctx.createOscillator();
+        final gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.value = offset == 0.0 ? 880 : 1046.5;
+        gain.gain.setValueAtTime(0.001, now + offset);
+        gain.gain.linearRampToValueAtTime(0.11, now + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.2);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.22);
+      }
+    } catch (_) {
+      // Silently degrade when browser autoplay policy blocks sound before gesture.
+    }
   }
 
   void _emitWebNotification(String title, String body) {
@@ -95,9 +170,6 @@ class WebPlatformBridge implements PlatformBridge {
       osc.stop(ctx.currentTime + (critical ? 0.35 : 0.18));
     } catch (_) {}
   }
-
-  @override
-  Future<void> stopRinging() async {}
 
   @override
   Future<bool> hasGms() async => false;
@@ -162,6 +234,7 @@ class WebPlatformBridge implements PlatformBridge {
 
   @override
   void dispose() {
+    _stopAlarmLoop();
     for (final t in _foregroundTimers.values) {
       t.cancel();
     }

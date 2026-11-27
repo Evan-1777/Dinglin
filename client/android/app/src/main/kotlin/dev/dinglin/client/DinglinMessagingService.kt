@@ -1,7 +1,5 @@
 package dev.dinglin.client
 
-import androidx.core.content.ContextCompat
-import android.content.Intent
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -22,17 +20,34 @@ class DinglinMessagingService : FirebaseMessagingService() {
         val entityId = data["entity_id"] ?: System.currentTimeMillis().toString()
         val eventType = data["event_type"] ?: "notification.created"
 
-        if (priority == "critical" && eventType == "notification.created") {
-            val svc = Intent(applicationContext, AlarmRingService::class.java).apply {
-                putExtra("schedule_id", entityId)
-                putExtra("entity_type", "notification")
-                putExtra("title", title)
-                putExtra("body", body)
-                putExtra("vibrate", true)
+        when (eventType) {
+            "schedule.upsert" -> {
+                val kind = data["schedule_kind"] ?: ""
+                val state = data["schedule_state"] ?: ""
+                if (kind == "alarm" && state == "ringing") {
+                    val snoozeMins = data["snooze_minutes"]?.toIntOrNull() ?: 10
+                    val vibrate = data["vibrate"]?.toBooleanStrictOrNull() ?: true
+                    AlarmRingService.startSafely(
+                        applicationContext,
+                        scheduleId = entityId,
+                        title = title,
+                        body = body,
+                        snoozeMinutes = snoozeMins,
+                        vibrate = vibrate,
+                    )
+                } else {
+                    AlarmRingService.stopIfMatching(applicationContext, entityId)
+                }
             }
-            ContextCompat.startForegroundService(applicationContext, svc)
-        } else {
-            NotificationChannels.showNotification(applicationContext, entityId, title, body, priority)
+            "schedule.delete" -> {
+                AlarmRingService.stopIfMatching(applicationContext, entityId)
+            }
+            "notification.created" -> {
+                NotificationChannels.showNotification(applicationContext, entityId, title, body, priority)
+            }
+            else -> {
+                // Non-notification control/sync events stay silent and wake Flutter sync only.
+            }
         }
 
         NativeBridgePlugin.emitEvent(
@@ -61,6 +76,7 @@ class DinglinMessagingService : FirebaseMessagingService() {
                 )
             }
         }
+        KeepAliveManager.apply(applicationContext)
         NativeBridgePlugin.emitEvent(mapOf("type" to "fcm_token", "token" to token))
     }
 }
