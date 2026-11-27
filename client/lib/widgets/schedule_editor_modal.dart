@@ -1,13 +1,20 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../state/app_store.dart';
 import '../theme/apple_tokens.dart';
+import 'app_icon.dart';
 import 'apple_primitives.dart';
 
 enum RepeatPreset { daily, weekdays, weekends, once, custom }
 
-String buildCronFromPreset(RepeatPreset preset, int hour, int minute, String customCron) {
+String buildCronFromPreset(
+  RepeatPreset preset,
+  int hour,
+  int minute,
+  String customCron,
+) {
   return switch (preset) {
     RepeatPreset.daily => '$minute $hour * * *',
     RepeatPreset.weekdays => '$minute $hour * * 1-5',
@@ -17,15 +24,35 @@ String buildCronFromPreset(RepeatPreset preset, int hour, int minute, String cus
   };
 }
 
+Future<void> showScheduleEditorModal(
+  BuildContext context, {
+  required AppStore store,
+  DinglinSchedule? existing,
+}) {
+  return showAppleAdaptiveModal<void>(
+    context: context,
+    title: existing == null ? '新建调度' : '编辑调度',
+    showClose: true,
+    maxWidth: 440,
+    builder: (_) => ScheduleEditorModal(
+      store: store,
+      existing: existing,
+      embedded: true,
+    ),
+  );
+}
+
 class ScheduleEditorModal extends StatefulWidget {
   const ScheduleEditorModal({
     super.key,
     required this.store,
     this.existing,
+    this.embedded = false,
   });
 
   final AppStore store;
   final DinglinSchedule? existing;
+  final bool embedded;
 
   @override
   State<ScheduleEditorModal> createState() => _ScheduleEditorModalState();
@@ -53,7 +80,9 @@ class _ScheduleEditorModalState extends State<ScheduleEditorModal> {
     super.initState();
     final e = widget.existing;
     _kind = e?.kind ?? 'alarm';
-    _priority = e?.priority ?? (_kind == 'alarm' ? 'critical' : 'normal');
+    _priority = _kind == 'alarm'
+        ? 'critical'
+        : (e?.priority ?? 'normal');
     _timezone = (e != null && e.timezone.isNotEmpty)
         ? e.timezone
         : widget.store.localTimezone;
@@ -106,6 +135,135 @@ class _ScheduleEditorModalState extends State<ScheduleEditorModal> {
     super.dispose();
   }
 
+  Future<void> _pickTime() async {
+    var tempHour = _hour;
+    var tempMinute = _minute;
+    final confirmed = await showAppleAdaptiveModal<bool>(
+      context: context,
+      title: '选择时间',
+      showClose: true,
+      maxWidth: 340,
+      builder: (ctx) {
+        final t = AppleTokens.of(ctx);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: 180,
+              child: CupertinoTheme(
+                data: CupertinoThemeData(
+                  brightness: t.isDark ? Brightness.dark : Brightness.light,
+                  textTheme: CupertinoTextThemeData(
+                    dateTimePickerTextStyle: AppleTokens.tabular.copyWith(
+                      fontSize: 21,
+                      fontWeight: FontWeight.w500,
+                      color: t.inkPrimary,
+                    ),
+                  ),
+                ),
+                child: CupertinoDatePicker(
+                  mode: CupertinoDatePickerMode.time,
+                  use24hFormat: true,
+                  initialDateTime: DateTime(2026, 1, 1, _hour, _minute),
+                  onDateTimeChanged: (dt) {
+                    tempHour = dt.hour;
+                    tempMinute = dt.minute;
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: t.accent,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('确定'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed == true && mounted) {
+      setState(() {
+        _hour = tempHour;
+        _minute = tempMinute;
+      });
+    }
+  }
+
+  Future<void> _pickTimezone() async {
+    final zones = <String>{...commonIanaTimezones, _timezone}.toList();
+    final picked = await showAppleAdaptiveModal<String>(
+      context: context,
+      title: '时区',
+      showClose: true,
+      maxWidth: 360,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 16),
+      builder: (ctx) {
+        final t = AppleTokens.of(ctx);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final tz in zones)
+              ApplePressable(
+                onTap: () => Navigator.of(ctx).pop(tz),
+                pressedScale: 0.99,
+                builder: (context, hovered, pressed) {
+                  final selected = tz == _timezone;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? t.bgSelected
+                          : pressed
+                              ? t.bgPressed
+                              : hovered
+                                  ? t.bgHover
+                                  : Colors.transparent,
+                      borderRadius: BorderRadius.circular(AppleTokens.radiusSm),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            tz,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: selected
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: selected ? t.accent : t.inkPrimary,
+                            ),
+                          ),
+                        ),
+                        if (selected)
+                          AppIcon(
+                            AppIconName.check,
+                            size: 15,
+                            color: t.accent,
+                            semanticsLabel: '已选中',
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        );
+      },
+    );
+    if (picked != null && mounted) {
+      setState(() => _timezone = picked);
+    }
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final snoozeMins = int.tryParse(_snoozeCtrl.text.trim()) ?? 0;
@@ -122,7 +280,7 @@ class _ScheduleEditorModalState extends State<ScheduleEditorModal> {
         'kind': _kind,
         'title': _titleCtrl.text.trim(),
         'body': _bodyCtrl.text.trim(),
-        'priority': _priority,
+        'priority': _kind == 'alarm' ? 'critical' : _priority,
         'snooze_minutes': snoozeMins > 0 ? snoozeMins : 10,
         'timezone': _timezone,
         'vibrate': _vibrate,
@@ -176,219 +334,243 @@ class _ScheduleEditorModalState extends State<ScheduleEditorModal> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final t = AppleTokens.of(context);
-    return AppleDialogShell(
-      title: widget.existing == null ? '新建调度' : '编辑调度',
-      showClose: true,
-      maxWidth: 440,
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (widget.existing == null) ...[
-              Center(
-                child: AppleSegmentedControl<String>(
-                  value: _kind,
-                  options: const [
-                    (value: 'alarm', label: '闹钟'),
-                    (value: 'scheduled_notification', label: '定时通知'),
-                    (value: 'countdown', label: '倒计时'),
-                  ],
-                  onChanged: (v) => setState(() {
-                    _kind = v;
-                    _priority = v == 'alarm' ? 'critical' : 'normal';
-                  }),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-            _LabeledField(
-              label: '标题',
-              child: TextFormField(
-                controller: _titleCtrl,
-                validator: (v) =>
-                    v == null || v.trim().isEmpty ? '请输入标题' : null,
-                decoration: appleInputDecoration(t, hint: '例如：晨会闹钟'),
+  Widget _buildFormContent(AppleTokens t) {
+    final currentDuration = int.tryParse(_durationMinCtrl.text.trim());
+    return Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (widget.existing == null) ...[
+            Center(
+              child: AppleSegmentedControl<String>(
+                value: _kind,
+                options: const [
+                  (value: 'alarm', label: '闹钟'),
+                  (value: 'scheduled_notification', label: '定时通知'),
+                  (value: 'countdown', label: '倒计时'),
+                ],
+                onChanged: (v) => setState(() {
+                  _kind = v;
+                  _priority = v == 'alarm' ? 'critical' : 'normal';
+                }),
               ),
             ),
-            const SizedBox(height: 12),
-            _LabeledField(
-              label: '备注',
-              child: TextFormField(
-                controller: _bodyCtrl,
-                decoration: appleInputDecoration(t, hint: '可选'),
-              ),
+            const SizedBox(height: 16),
+          ],
+          _LabeledField(
+            label: '标题',
+            child: TextFormField(
+              controller: _titleCtrl,
+              validator: (v) =>
+                  v == null || v.trim().isEmpty ? '请输入标题' : null,
+              decoration: appleInputDecoration(t, hint: '标题'),
             ),
-            const SizedBox(height: 12),
-            if (_kind == 'countdown')
-              _LabeledField(
-                label: '时长（分钟）',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final mins in const [5, 15, 25, 45])
-                          ChoiceChip(
-                            label: Text('${mins}m'),
-                            selected: _durationMinCtrl.text.trim() == '$mins',
-                            onSelected: (_) => setState(
-                              () => _durationMinCtrl.text = '$mins',
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: _durationMinCtrl,
-                      keyboardType: TextInputType.number,
-                      onChanged: (_) => setState(() {}),
-                      validator: (v) => (int.tryParse((v ?? '').trim()) ?? 0) <= 0
-                          ? '请输入正整数'
-                          : null,
-                      decoration: appleInputDecoration(t, hint: '15'),
-                    ),
-                  ],
-                ),
-              )
-            else ...[
-              Row(
+          ),
+          const SizedBox(height: 12),
+          _LabeledField(
+            label: '备注',
+            child: TextFormField(
+              controller: _bodyCtrl,
+              decoration: appleInputDecoration(t, hint: '备注'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_kind == 'countdown')
+            _LabeledField(
+              label: '时长（分钟）',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: _LabeledField(
-                      label: '时间',
-                      child: GestureDetector(
-                        onTap: () async {
-                          final picked = await showTimePicker(
-                            context: context,
-                            initialTime:
-                                TimeOfDay(hour: _hour, minute: _minute),
-                          );
-                          if (picked != null) {
-                            setState(() {
-                              _hour = picked.hour;
-                              _minute = picked.minute;
-                            });
-                          }
-                        },
-                        child: Container(
+                  AppleChipSelector<int>(
+                    value: currentDuration,
+                    options: const [
+                      (value: 5, label: '5m'),
+                      (value: 15, label: '15m'),
+                      (value: 25, label: '25m'),
+                      (value: 45, label: '45m'),
+                    ],
+                    onChanged: (mins) => setState(
+                      () => _durationMinCtrl.text = '$mins',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _durationMinCtrl,
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => setState(() {}),
+                    validator: (v) =>
+                        (int.tryParse((v ?? '').trim()) ?? 0) <= 0
+                            ? '请输入正整数'
+                            : null,
+                    decoration: appleInputDecoration(t, hint: '分钟'),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: _LabeledField(
+                    label: '时间',
+                    child: ApplePressable(
+                      onTap: _pickTime,
+                      pressedScale: 0.98,
+                      builder: (context, hovered, pressed) {
+                        return AnimatedContainer(
+                          duration: AppleTokens.motionFast,
                           height: 38,
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           decoration: BoxDecoration(
-                            color: t.bgSurfaceSecondary,
+                            color: pressed
+                                ? t.bgPressed
+                                : hovered
+                                    ? t.bgHover
+                                    : t.bgSurfaceSecondary,
                             borderRadius:
                                 BorderRadius.circular(AppleTokens.radiusSm),
-                            border: Border.all(color: t.borderHairline),
+                            border: Border.all(
+                              color: hovered ? t.accent : t.borderHairline,
+                            ),
                           ),
-                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${_hour.toString().padLeft(2, '0')}:${_minute.toString().padLeft(2, '0')}',
+                                  style: AppleTokens.tabular.copyWith(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: t.inkPrimary,
+                                  ),
+                                ),
+                              ),
+                              AppIcon(
+                                AppIconName.clock,
+                                size: 14,
+                                color: t.inkTertiary,
+                                semanticsLabel: '选择时间',
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _LabeledField(
+                    label: '贪睡（分钟）',
+                    child: TextFormField(
+                      controller: _snoozeCtrl,
+                      keyboardType: TextInputType.number,
+                      validator: (v) =>
+                          (int.tryParse((v ?? '').trim()) ?? 0) <= 0
+                              ? '须为正整数'
+                              : null,
+                      decoration: appleInputDecoration(t, hint: '分钟'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _LabeledField(
+              label: '时区',
+              child: ApplePressable(
+                onTap: _pickTimezone,
+                pressedScale: 0.99,
+                builder: (context, hovered, pressed) {
+                  return AnimatedContainer(
+                    duration: AppleTokens.motionFast,
+                    height: 38,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: pressed
+                          ? t.bgPressed
+                          : hovered
+                              ? t.bgHover
+                              : t.bgSurfaceSecondary,
+                      borderRadius:
+                          BorderRadius.circular(AppleTokens.radiusSm),
+                      border: Border.all(
+                        color: hovered ? t.accent : t.borderHairline,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
                           child: Text(
-                            '${_hour.toString().padLeft(2, '0')}:${_minute.toString().padLeft(2, '0')}',
-                            style: AppleTokens.tabular.copyWith(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
+                            _timezone,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
                               color: t.inkPrimary,
                             ),
                           ),
                         ),
-                      ),
+                        AppIcon(
+                          AppIconName.chevronRight,
+                          size: 14,
+                          color: t.inkTertiary,
+                          semanticsLabel: '选择时区',
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _LabeledField(
-                      label: '贪睡（分钟）',
-                      child: TextFormField(
-                        controller: _snoozeCtrl,
-                        keyboardType: TextInputType.number,
-                        validator: (v) =>
-                            (int.tryParse((v ?? '').trim()) ?? 0) <= 0
-                                ? '须为正整数'
-                                : null,
-                        decoration: appleInputDecoration(t, hint: '10'),
-                      ),
-                    ),
-                  ),
-                ],
+                  );
+                },
               ),
-              const SizedBox(height: 12),
-              _LabeledField(
-                label: '时区',
-                child: DropdownButtonFormField<String>(
-                  initialValue: _timezone,
-                  isExpanded: true,
-                  decoration: appleInputDecoration(t, hint: '选择时区'),
-                  dropdownColor: t.bgSurface,
-                  style: TextStyle(fontSize: 13, color: t.inkPrimary),
-                  items: [
-                    for (final tz in {
-                      ...commonIanaTimezones,
-                      _timezone,
-                    })
-                      DropdownMenuItem(value: tz, child: Text(tz)),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) setState(() => _timezone = v);
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              _LabeledField(
-                label: '重复',
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final item in const [
-                      (RepeatPreset.daily, '每天'),
-                      (RepeatPreset.weekdays, '工作日'),
-                      (RepeatPreset.weekends, '周末'),
-                      (RepeatPreset.once, '单次'),
-                      (RepeatPreset.custom, '自定义'),
-                    ])
-                      ChoiceChip(
-                        label: Text(item.$2),
-                        selected: _repeat == item.$1,
-                        onSelected: (_) => setState(() => _repeat = item.$1),
-                      ),
-                  ],
-                ),
-              ),
-              if (_repeat == RepeatPreset.custom) ...[
-                const SizedBox(height: 10),
-                _LabeledField(
-                  label: 'Cron（5 字段）',
-                  child: TextFormField(
-                    controller: _cronCtrl,
-                    decoration: appleInputDecoration(t, hint: '0 8 * * 1-5'),
-                  ),
-                ),
-              ],
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Text(
-                  '震动提醒',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: t.inkSecondary,
-                  ),
-                ),
-                const Spacer(),
-                AppleSwitch(
-                  value: _vibrate,
-                  semanticsLabel: '震动提醒',
-                  onChanged: (v) => setState(() => _vibrate = v),
-                ),
-              ],
             ),
+            const SizedBox(height: 12),
+            _LabeledField(
+              label: '重复',
+              child: AppleChipSelector<RepeatPreset>(
+                value: _repeat,
+                options: const [
+                  (value: RepeatPreset.daily, label: '每天'),
+                  (value: RepeatPreset.weekdays, label: '工作日'),
+                  (value: RepeatPreset.weekends, label: '周末'),
+                  (value: RepeatPreset.once, label: '单次'),
+                  (value: RepeatPreset.custom, label: '自定义'),
+                ],
+                onChanged: (preset) => setState(() => _repeat = preset),
+              ),
+            ),
+            if (_repeat == RepeatPreset.custom) ...[
+              const SizedBox(height: 10),
+              _LabeledField(
+                label: 'Cron（5 字段）',
+                child: TextFormField(
+                  controller: _cronCtrl,
+                  decoration: appleInputDecoration(t, hint: '0 8 * * 1-5'),
+                ),
+              ),
+            ],
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Text(
+                '震动',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: t.inkSecondary,
+                ),
+              ),
+              const Spacer(),
+              AppleSwitch(
+                value: _vibrate,
+                semanticsLabel: '震动',
+                onChanged: (v) => setState(() => _vibrate = v),
+              ),
+            ],
+          ),
+          if (_kind != 'alarm') ...[
             const SizedBox(height: 12),
             _LabeledField(
               label: '级别',
@@ -402,35 +584,49 @@ class _ScheduleEditorModalState extends State<ScheduleEditorModal> {
                 onChanged: (v) => setState(() => _priority = v),
               ),
             ),
-            if (_error != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                _error!,
-                style: TextStyle(fontSize: 12, color: t.critical),
-              ),
-            ],
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: _submitting ? null : () => Navigator.pop(context),
-                  child: const Text('取消'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: _submitting ? null : _submit,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: t.accent,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: Text(_submitting ? '保存中…' : '保存'),
-                ),
-              ],
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _error!,
+              style: TextStyle(fontSize: 12, color: t.critical),
             ),
           ],
-        ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: _submitting ? null : () => Navigator.pop(context),
+                child: const Text('取消'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _submitting ? null : _submit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: t.accent,
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(_submitting ? '保存中…' : '保存'),
+              ),
+            ],
+          ),
+        ],
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppleTokens.of(context);
+    if (widget.embedded) {
+      return _buildFormContent(t);
+    }
+    return AppleDialogShell(
+      title: widget.existing == null ? '新建调度' : '编辑调度',
+      showClose: true,
+      maxWidth: 440,
+      child: _buildFormContent(t),
     );
   }
 }

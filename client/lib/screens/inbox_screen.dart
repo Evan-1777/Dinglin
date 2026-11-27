@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/models.dart';
 import '../state/app_store.dart';
@@ -70,7 +74,39 @@ class _InboxScreenState extends State<InboxScreen>
     super.dispose();
   }
 
-  Widget _buildSearchField(AppleTokens t, AppStore store, {bool autoFocus = false}) {
+  Future<void> _confirmClearRead(AppStore store) async {
+    final count = store.readCountForScope(sourceId: store.selectedSourceId);
+    if (count <= 0) return;
+    final ok = await showAppleConfirmDialog(
+      context,
+      title: '清空已看通知',
+      message: '确认永久删除当前范围内的 $count 条已看通知？',
+      confirmLabel: '清空',
+    );
+    if (ok) {
+      await store.clearReadNotifications(sourceId: store.selectedSourceId);
+    }
+  }
+
+  Future<void> _confirmBatchDelete(AppStore store) async {
+    final count = store.selectedNotificationIds.length;
+    if (count <= 0) return;
+    final ok = await showAppleConfirmDialog(
+      context,
+      title: '删除通知',
+      message: '确认永久删除已选中的 $count 条通知？',
+      confirmLabel: '删除',
+    );
+    if (ok) {
+      await store.batchDeleteSelected();
+    }
+  }
+
+  Widget _buildSearchField(
+    AppleTokens t,
+    AppStore store, {
+    bool autoFocus = false,
+  }) {
     return SizedBox(
       height: 32,
       child: TextField(
@@ -122,123 +158,231 @@ class _InboxScreenState extends State<InboxScreen>
     );
   }
 
+  Widget _buildTopBar(
+    AppleTokens t,
+    AppStore store,
+    DinglinSource? selectedSource,
+    bool isWide,
+  ) {
+    if (store.selectionMode) {
+      final selectedCount = store.selectedNotificationIds.length;
+      final readCount =
+          store.readCountForScope(sourceId: store.selectedSourceId);
+      final hasVisible = store.filteredNotifications.isNotEmpty;
+      final allSelected = store.allVisibleSelected;
+
+      return AppleTopBar(
+        leading: AppleIconButton(
+          icon: AppIconName.close,
+          tooltip: '退出多选',
+          onPressed: store.exitSelectionMode,
+        ),
+        title: '已选 $selectedCount 项',
+        trailing: [
+          AppleIconButton(
+            icon: AppIconName.eraser,
+            tooltip: '清空已看',
+            onPressed: readCount > 0 ? () => _confirmClearRead(store) : null,
+          ),
+          const SizedBox(width: 4),
+          AppleIconButton(
+            icon: allSelected ? AppIconName.checkSquare : AppIconName.square,
+            tooltip: allSelected ? '取消全选' : '全选',
+            active: allSelected,
+            onPressed:
+                hasVisible ? store.selectAllVisibleNotifications : null,
+          ),
+        ],
+      );
+    }
+
+    return AppleTopBar(
+      title: selectedSource?.name ?? '通知',
+      expandedContent: !isWide && _mobileSearchExpanded
+          ? Row(
+              children: [
+                Expanded(
+                  child: _buildSearchField(t, store, autoFocus: true),
+                ),
+                const SizedBox(width: 8),
+                AppleIconButton(
+                  icon: AppIconName.close,
+                  tooltip: '收起搜索',
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    store.setSearchQuery('');
+                    setState(() => _mobileSearchExpanded = false);
+                  },
+                ),
+              ],
+            )
+          : null,
+      trailing: [
+        if (isWide) ...[
+          SizedBox(
+            width: 220,
+            child: _buildSearchField(t, store),
+          ),
+          const SizedBox(width: 8),
+        ] else ...[
+          AppleIconButton(
+            icon: AppIconName.search,
+            tooltip: '搜索',
+            active: store.searchQuery.isNotEmpty,
+            onPressed: () {
+              setState(() => _mobileSearchExpanded = true);
+            },
+          ),
+          const SizedBox(width: 2),
+        ],
+        AppleIconButton(
+          icon: AppIconName.checkDouble,
+          tooltip: '全部已看',
+          onPressed: store.unreadCount > 0
+              ? () => store.markAllRead(sourceId: store.selectedSourceId)
+              : null,
+        ),
+        const SizedBox(width: 2),
+        AppleIconButton(
+          icon: AppIconName.listChecks,
+          tooltip: '批量管理',
+          onPressed: store.filteredNotifications.isNotEmpty
+              ? () => store.enterSelectionMode()
+              : null,
+        ),
+        const SizedBox(width: 2),
+        RotationTransition(
+          turns: _spinCtrl,
+          child: AppleIconButton(
+            icon: AppIconName.refresh,
+            tooltip: '刷新',
+            onPressed: store.refreshAll,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = AppleTokens.of(context);
     final store = widget.store;
     final selectedSource = store.sourceById(store.selectedSourceId);
-    final isWide = MediaQuery.sizeOf(context).width >= 640;
+    final width = MediaQuery.sizeOf(context).width;
+    final isWide = width >= 640;
     _syncSpinner();
 
     return Column(
       children: [
-        AppleTopBar(
-          title: selectedSource?.name ?? '通知',
-          expandedContent: !isWide && _mobileSearchExpanded
-              ? Row(
+        _buildTopBar(t, store, selectedSource, isWide),
+        Expanded(
+          child: Stack(
+            children: [
+              RefreshIndicator(
+                color: t.accent,
+                onRefresh: store.refreshAll,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    16,
+                    20,
+                    store.selectionMode ? 96 : 32,
+                  ),
                   children: [
-                    Expanded(
-                      child: _buildSearchField(t, store, autoFocus: true),
-                    ),
-                    const SizedBox(width: 8),
-                    AppleIconButton(
-                      icon: AppIconName.close,
-                      tooltip: '收起搜索',
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        store.setSearchQuery('');
-                        setState(() => _mobileSearchExpanded = false);
-                      },
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 780),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (store.errorMessage != null)
+                              _ErrorBanner(
+                                message: store.errorMessage!,
+                                onRetry: store.refreshAll,
+                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: AppleSegmentedControl<InboxFilter>(
+                                      value: store.inboxFilter,
+                                      options: const [
+                                        (value: InboxFilter.all, label: '全部'),
+                                        (
+                                          value: InboxFilter.unread,
+                                          label: '未读'
+                                        ),
+                                        (
+                                          value: InboxFilter.critical,
+                                          label: '强提醒'
+                                        ),
+                                      ],
+                                      onChanged: store.setInboxFilter,
+                                    ),
+                                  ),
+                                ),
+                                if (store.selectedSourceId != null) ...[
+                                  const SizedBox(width: 8),
+                                  AppleActionChip(
+                                    icon: AppIconName.close,
+                                    label: selectedSource?.name ?? '',
+                                    onPressed: () =>
+                                        store.setSelectedSource(null),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            if (width < 960 && store.sources.isNotEmpty) ...[
+                              const SizedBox(height: 10),
+                              _CompactSourceFilterBar(store: store),
+                            ],
+                            const SizedBox(height: 16),
+                            if (store.isLoading && store.notifications.isEmpty)
+                              const _InboxSkeleton()
+                            else
+                              _buildGroupedList(context, store),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
-                )
-              : null,
-          trailing: [
-            if (isWide) ...[
-              Flexible(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 230),
-                  child: _buildSearchField(t, store),
                 ),
               ),
-              const SizedBox(width: 8),
-            ] else ...[
-              AppleIconButton(
-                icon: AppIconName.search,
-                tooltip: '搜索',
-                active: store.searchQuery.isNotEmpty,
-                onPressed: () {
-                  setState(() => _mobileSearchExpanded = true);
-                },
-              ),
-              const SizedBox(width: 4),
-            ],
-            AppleIconButton(
-              icon: AppIconName.checkDouble,
-              tooltip: '全部已读',
-              onPressed: store.unreadCount > 0
-                  ? () => store.markAllRead(sourceId: store.selectedSourceId)
-                  : null,
-            ),
-            const SizedBox(width: 4),
-            RotationTransition(
-              turns: _spinCtrl,
-              child: AppleIconButton(
-                icon: AppIconName.refresh,
-                tooltip: '刷新',
-                onPressed: store.refreshAll,
-              ),
-            ),
-          ],
-        ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-            children: [
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 780),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (store.errorMessage != null)
-                        _ErrorBanner(
-                          message: store.errorMessage!,
-                          onRetry: store.refreshAll,
-                        ),
-                      Row(
-                        children: [
-                          Flexible(
-                            child: AppleSegmentedControl<InboxFilter>(
-                              value: store.inboxFilter,
-                              options: const [
-                                (value: InboxFilter.all, label: '全部'),
-                                (value: InboxFilter.unread, label: '未读'),
-                                (value: InboxFilter.critical, label: '强提醒'),
-                              ],
-                              onChanged: store.setInboxFilter,
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 16,
+                child: IgnorePointer(
+                  ignoring: !store.selectionMode,
+                  child: Center(
+                    child: AnimatedSwitcher(
+                      duration: AppleTokens.motion,
+                      switchInCurve: AppleTokens.motionCurve,
+                      switchOutCurve: AppleTokens.motionCurve,
+                      transitionBuilder: (child, anim) {
+                        return SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.35),
+                            end: Offset.zero,
+                          ).animate(anim),
+                          child: FadeTransition(opacity: anim, child: child),
+                        );
+                      },
+                      child: !store.selectionMode
+                          ? const SizedBox.shrink()
+                          : _FloatingBatchBar(
+                              key: const ValueKey('batch-bar'),
+                              selectedCount:
+                                  store.selectedNotificationIds.length,
+                              onMarkRead: () =>
+                                  store.batchMarkSelectedRead(read: true),
+                              onMarkUnread: () =>
+                                  store.batchMarkSelectedRead(read: false),
+                              onDelete: () => _confirmBatchDelete(store),
                             ),
-                          ),
-                          const Spacer(),
-                          if (store.selectedSourceId != null)
-                            AppleActionChip(
-                              icon: AppIconName.close,
-                              label: selectedSource?.name ?? '',
-                              onPressed: () => store.setSelectedSource(null),
-                            ),
-                        ],
-                      ),
-                      if (MediaQuery.sizeOf(context).width < 960 &&
-                          store.sources.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        _CompactSourceFilterBar(store: store),
-                      ],
-                      const SizedBox(height: 16),
-                      if (store.isLoading && store.notifications.isEmpty)
-                        const _InboxSkeleton()
-                      else
-                        _buildGroupedList(context, store),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -298,6 +442,7 @@ class _InboxScreenState extends State<InboxScreen>
         if (critical.isNotEmpty) ...[
           _GroupHeader(title: '强提醒', color: t.critical),
           AppleCardGroup(
+            dividerIndent: 36,
             children: [
               for (final n in critical)
                 _NotificationRow(store: store, notification: n),
@@ -308,6 +453,7 @@ class _InboxScreenState extends State<InboxScreen>
         if (today.isNotEmpty) ...[
           _GroupHeader(title: '今天', color: t.inkSecondary),
           AppleCardGroup(
+            dividerIndent: 36,
             children: [
               for (final n in today)
                 _NotificationRow(store: store, notification: n),
@@ -318,6 +464,7 @@ class _InboxScreenState extends State<InboxScreen>
         if (earlier.isNotEmpty) ...[
           _GroupHeader(title: '更早', color: t.inkSecondary),
           AppleCardGroup(
+            dividerIndent: 36,
             children: [
               for (final n in earlier)
                 _NotificationRow(store: store, notification: n),
@@ -325,6 +472,146 @@ class _InboxScreenState extends State<InboxScreen>
           ),
         ],
       ],
+    );
+  }
+}
+
+class _FloatingBatchBar extends StatelessWidget {
+  const _FloatingBatchBar({
+    super.key,
+    required this.selectedCount,
+    required this.onMarkRead,
+    required this.onMarkUnread,
+    required this.onDelete,
+  });
+
+  final int selectedCount;
+  final VoidCallback onMarkRead;
+  final VoidCallback onMarkUnread;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppleTokens.of(context);
+    final enabled = selectedCount > 0;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppleTokens.radiusPill),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(
+          sigmaX: AppleTokens.blurSigma,
+          sigmaY: AppleTokens.blurSigma,
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: t.bgTopbar,
+            borderRadius: BorderRadius.circular(AppleTokens.radiusPill),
+            border: Border.all(color: t.borderHairline),
+            boxShadow: t.floatShadow,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _BatchBarButton(
+                icon: AppIconName.checkDouble,
+                label: '标为已看',
+                color: t.accent,
+                enabled: enabled,
+                onTap: onMarkRead,
+              ),
+              Container(
+                width: 1,
+                height: 18,
+                margin: const EdgeInsets.symmetric(horizontal: 6),
+                color: t.borderHairline,
+              ),
+              _BatchBarButton(
+                icon: AppIconName.bell,
+                label: '标为未读',
+                color: t.inkPrimary,
+                enabled: enabled,
+                onTap: onMarkUnread,
+              ),
+              Container(
+                width: 1,
+                height: 18,
+                margin: const EdgeInsets.symmetric(horizontal: 6),
+                color: t.borderHairline,
+              ),
+              _BatchBarButton(
+                icon: AppIconName.trash,
+                label: '删除',
+                color: t.critical,
+                enabled: enabled,
+                onTap: onDelete,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BatchBarButton extends StatelessWidget {
+  const _BatchBarButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final AppIconName icon;
+  final String label;
+  final Color color;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppleTokens.of(context);
+    return ApplePressable(
+      onTap: enabled ? onTap : null,
+      pressedScale: 0.95,
+      builder: (context, hovered, pressed) {
+        final effectiveColor = enabled ? color : t.inkTertiary;
+        return AnimatedContainer(
+          duration: AppleTokens.motionFast,
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+          decoration: BoxDecoration(
+            color: !enabled
+                ? Colors.transparent
+                : pressed
+                    ? t.bgPressed
+                    : hovered
+                        ? t.bgHover
+                        : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppleTokens.radiusPill),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppIcon(
+                icon,
+                size: 14,
+                color: effectiveColor,
+                semanticsLabel: label,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: effectiveColor,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -350,7 +637,7 @@ class _GroupHeader extends StatelessWidget {
   }
 }
 
-class _NotificationRow extends StatefulWidget {
+class _NotificationRow extends StatelessWidget {
   const _NotificationRow({
     required this.store,
     required this.notification,
@@ -360,32 +647,37 @@ class _NotificationRow extends StatefulWidget {
   final DinglinNotification notification;
 
   @override
-  State<_NotificationRow> createState() => _NotificationRowState();
-}
-
-class _NotificationRowState extends State<_NotificationRow> {
-  bool _hovered = false;
-
-  @override
   Widget build(BuildContext context) {
     final t = AppleTokens.of(context);
-    final n = widget.notification;
-    final src = widget.store.sourceById(n.sourceId);
-    final selected = widget.store.selectedNotificationId == n.id;
+    final n = notification;
+    final src = store.sourceById(n.sourceId);
+    final inSelection = store.selectionMode;
+    final isChecked = store.selectedNotificationIds.contains(n.id);
+    final selected =
+        inSelection ? isChecked : store.selectedNotificationId == n.id;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => widget.store.selectNotification(n.id),
-        child: AnimatedContainer(
-          duration: AppleTokens.motion,
+    final row = ApplePressable(
+      onTap: () {
+        if (inSelection) {
+          store.toggleNotificationSelection(n.id);
+        } else {
+          store.selectNotification(n.id);
+        }
+      },
+      onLongPress: !inSelection ? () => store.enterSelectionMode(n.id) : null,
+      pressedScale: 0.992,
+      haptic: AppleHaptic.selection,
+      builder: (context, hovered, pressed) {
+        return AnimatedContainer(
+          duration: AppleTokens.motionFast,
+          curve: AppleTokens.motionCurve,
           color: selected
               ? t.bgSelected
-              : _hovered
-                  ? t.bgHover
-                  : Colors.transparent,
+              : pressed
+                  ? t.bgPressed
+                  : hovered
+                      ? t.bgHover
+                      : Colors.transparent,
           child: Stack(
             children: [
               if (n.isCritical)
@@ -404,7 +696,7 @@ class _NotificationRowState extends State<_NotificationRow> {
                   ),
                 ),
               Opacity(
-                opacity: n.isUnread ? 1.0 : 0.72,
+                opacity: n.isUnread || inSelection ? 1.0 : 0.72,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
@@ -413,74 +705,92 @@ class _NotificationRowState extends State<_NotificationRow> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        margin: const EdgeInsets.only(top: 6),
-                        decoration: BoxDecoration(
-                          color: !n.isUnread
-                              ? Colors.transparent
-                              : n.isCritical
-                                  ? t.critical
-                                  : t.accent,
-                          shape: BoxShape.circle,
+                      SizedBox(
+                        width: 20,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: AnimatedSwitcher(
+                            duration: AppleTokens.motionFast,
+                            child: inSelection
+                                ? AppIcon(
+                                    isChecked
+                                        ? AppIconName.checkSquare
+                                        : AppIconName.square,
+                                    key: ValueKey('chk-$isChecked'),
+                                    size: 16,
+                                    color: isChecked ? t.accent : t.inkTertiary,
+                                    semanticsLabel: isChecked ? '已选中' : '未选中',
+                                  )
+                                : Container(
+                                    key: const ValueKey('dot'),
+                                    width: 8,
+                                    height: 8,
+                                    margin: const EdgeInsets.only(top: 4),
+                                    decoration: BoxDecoration(
+                                      color: !n.isUnread
+                                          ? Colors.transparent
+                                          : n.isCritical
+                                              ? t.critical
+                                              : t.accent,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
                               children: [
-                                if (src != null) ...[
-                                  Container(
-                                    width: 7,
-                                    height: 7,
-                                    decoration: BoxDecoration(
-                                      color: parseHexColor(src.color,
-                                          fallback: t.accent),
-                                      shape: BoxShape.circle,
-                                    ),
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      if (src != null) ...[
+                                        Container(
+                                          width: 7,
+                                          height: 7,
+                                          decoration: BoxDecoration(
+                                            color: parseHexColor(
+                                              src.color,
+                                              fallback: t.accent,
+                                            ),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 5),
+                                        Flexible(
+                                          child: Text(
+                                            src.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                              color: t.inkPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      if (n.isCritical)
+                                        ApplePill(
+                                          label: '强提醒',
+                                          background: t.criticalBg,
+                                          foreground: t.critical,
+                                        ),
+                                      if (n.priority == 'silent')
+                                        ApplePill(
+                                          label: '静默',
+                                          background: t.bgSurfaceSecondary,
+                                          foreground: t.inkSecondary,
+                                        ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 5),
-                                  Flexible(
-                                    child: Text(
-                                      src.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                        color: t.inkPrimary,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                ],
-                                if (n.isCritical)
-                                  ApplePill(
-                                    label: '强提醒',
-                                    background: t.criticalBg,
-                                    foreground: t.critical,
-                                  ),
-                                if (n.priority == 'silent')
-                                  ApplePill(
-                                    label: '静默',
-                                    background: t.bgSurfaceSecondary,
-                                    foreground: t.inkSecondary,
-                                  ),
-                                if (n.status == 'snoozed' &&
-                                    n.snoozedUntil != null) ...[
-                                  const SizedBox(width: 6),
-                                  ApplePill(
-                                    label:
-                                        '延后至 ${formatClockHm(n.snoozedUntil!)}',
-                                    background: t.warningBg,
-                                    foreground: t.warning,
-                                  ),
-                                ],
-                                const Spacer(),
+                                ),
+                                const SizedBox(width: 8),
                                 Text(
                                   formatRelativeTime(n.createdAt),
                                   style: AppleTokens.tabular.copyWith(
@@ -493,9 +803,13 @@ class _NotificationRowState extends State<_NotificationRow> {
                             const SizedBox(height: 4),
                             Text(
                               n.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 14,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: n.isUnread
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
                                 color: t.inkPrimary,
                               ),
                             ),
@@ -507,56 +821,29 @@ class _NotificationRowState extends State<_NotificationRow> {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 13,
+                                  height: 1.4,
                                   color: t.inkSecondary,
                                 ),
                               ),
                             ],
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: [
-                                AppleActionChip(
-                                  icon: AppIconName.checkDouble,
-                                  tooltip: '已读',
-                                  done: n.status == 'read',
-                                  onPressed: () => widget.store.submitReceipt(
-                                    n.id,
-                                    'read',
-                                    toastLabel: '已读',
-                                  ),
-                                ),
-                                AppleActionChip(
-                                  icon: AppIconName.check,
-                                  tooltip: '确认',
-                                  done: n.status == 'acked',
-                                  onPressed: () => widget.store.submitReceipt(
-                                    n.id,
-                                    'ack',
-                                    toastLabel: '已确认',
-                                  ),
-                                ),
-                                AppleActionChip(
-                                  icon: AppIconName.snooze,
-                                  tooltip: '延后',
-                                  done: n.status == 'snoozed',
-                                  onPressed: () => widget.store.submitReceipt(
-                                    n.id,
-                                    'snooze',
-                                    toastLabel: '已延后',
-                                  ),
-                                ),
-                                for (final act in n.actions)
-                                  AppleActionChip(
-                                    label: act.label,
-                                    onPressed: () => widget.store.submitReceipt(
-                                      n.id,
-                                      act.id,
-                                      toastLabel: act.label,
+                            if (n.actions.isNotEmpty && !inSelection) ...[
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final act in n.actions)
+                                    AppleActionChip(
+                                      label: act.label,
+                                      onPressed: () => store.submitReceipt(
+                                        n.id,
+                                        act.id,
+                                        toastLabel: act.label,
+                                      ),
                                     ),
-                                  ),
-                              ],
-                            ),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -566,8 +853,55 @@ class _NotificationRowState extends State<_NotificationRow> {
               ),
             ],
           ),
+        );
+      },
+    );
+
+    if (inSelection) return row;
+
+    return Dismissible(
+      key: ValueKey('notif-${n.id}'),
+      background: Container(
+        color: t.accent,
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 20),
+        child: AppIcon(
+          n.isUnread ? AppIconName.checkDouble : AppIconName.bell,
+          size: 18,
+          color: Colors.white,
+          semanticsLabel: n.isUnread ? '标为已看' : '标为未读',
         ),
       ),
+      secondaryBackground: Container(
+        color: t.critical,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: const AppIcon(
+          AppIconName.trash,
+          size: 18,
+          color: Colors.white,
+          semanticsLabel: '删除',
+        ),
+      ),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          HapticFeedback.selectionClick();
+          unawaited(
+            store.markNotificationRead(
+              n.id,
+              read: n.isUnread,
+              showFeedback: true,
+            ),
+          );
+          return false;
+        }
+        HapticFeedback.lightImpact();
+        return true;
+      },
+      onDismissed: (_) {
+        unawaited(store.deleteNotification(n.id));
+      },
+      child: row,
     );
   }
 }
@@ -590,8 +924,12 @@ class _ErrorBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          AppIcon(AppIconName.alert,
-              size: 16, color: t.critical, semanticsLabel: '错误'),
+          AppIcon(
+            AppIconName.alert,
+            size: 16,
+            color: t.critical,
+            semanticsLabel: '错误',
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -610,47 +948,78 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-class _InboxSkeleton extends StatelessWidget {
+class _InboxSkeleton extends StatefulWidget {
   const _InboxSkeleton();
+
+  @override
+  State<_InboxSkeleton> createState() => _InboxSkeletonState();
+}
+
+class _InboxSkeletonState extends State<_InboxSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = AppleTokens.of(context);
-    return AppleCardGroup(
-      children: List.generate(
-        3,
-        (_) => Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 140,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: t.bgSurfaceSecondary,
-                  borderRadius: BorderRadius.circular(4),
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) {
+        final alpha = 0.45 + 0.45 * Curves.easeInOut.transform(_ctrl.value);
+        return Opacity(opacity: alpha, child: child);
+      },
+      child: AppleCardGroup(
+        dividerIndent: 16,
+        children: List.generate(
+          3,
+          (_) => Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 120,
+                  height: 11,
+                  decoration: BoxDecoration(
+                    color: t.bgSurfaceSecondary,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Container(
-                width: 260,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: t.bgSurfaceSecondary,
-                  borderRadius: BorderRadius.circular(4),
+                const SizedBox(height: 10),
+                Container(
+                  width: 240,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: t.bgSurfaceSecondary,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: t.bgSurfaceSecondary,
-                  borderRadius: BorderRadius.circular(4),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: t.bgSurfaceSecondary,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -750,15 +1119,22 @@ class _SourceFilterChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = AppleTokens.of(context);
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: AppleTokens.motion,
+    return ApplePressable(
+      onTap: onTap,
+      pressedScale: 0.96,
+      builder: (context, hovered, pressed) {
+        return AnimatedContainer(
+          duration: AppleTokens.motionFast,
+          curve: AppleTokens.motionCurve,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
-            color: selected ? t.bgSelected : t.bgSurface,
+            color: selected
+                ? t.bgSelected
+                : pressed
+                    ? t.bgPressed
+                    : hovered
+                        ? t.bgHover
+                        : t.bgSurface,
             borderRadius: BorderRadius.circular(AppleTokens.radiusPill),
             border: Border.all(
               color: selected ? t.accent : t.borderHairline,
@@ -799,8 +1175,8 @@ class _SourceFilterChip extends StatelessWidget {
               ],
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

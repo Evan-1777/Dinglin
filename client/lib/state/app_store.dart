@@ -49,10 +49,16 @@ class AppStore extends ChangeNotifier {
   String? selectedNotificationId;
   String? selectedScheduleId;
 
+  bool selectionMode = false;
+  Set<String> selectedNotificationIds = {};
+
+  String? ringingScheduleId;
+
   ConnectionStatus connectionStatus = ConnectionStatus.unconfigured;
   ThemePreference themePreference = ThemePreference.system;
   KeepAliveConfig keepAliveConfig = const KeepAliveConfig();
   PermissionStatus permissionStatus = PermissionStatus.allOk;
+  bool supportsAutoStartSettings = false;
   String localTimezone = detectLocalIanaTimezone();
 
   bool isLoading = false;
@@ -83,8 +89,10 @@ class AppStore extends ChangeNotifier {
     deviceId = saved.deviceId;
     api.updateCredentials(baseUrl: serverUrl, token: authToken);
     localTimezone = await platform.getLocalTimezone();
+    supportsAutoStartSettings = await platform.supportsAutoStartSettings();
     await _reconcileSyncCursor();
     await refreshPermissions();
+    await platform.setAppForeground(true);
 
     if (serverUrl.isNotEmpty && authToken.isNotEmpty) {
       await _initPlatform();
@@ -124,7 +132,9 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> onAppResumed() async {
+    await platform.setAppForeground(true);
     localTimezone = await platform.getLocalTimezone();
+    supportsAutoStartSettings = await platform.supportsAutoStartSettings();
     await _reconcileSyncCursor();
     await refreshPermissions();
     if (serverUrl.isNotEmpty && authToken.isNotEmpty) {
@@ -132,10 +142,19 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  Future<void> onAppPaused() async {
+    await platform.setAppForeground(false);
+    if (platform.supportsKeepAlive &&
+        keepAliveConfig.mode != KeepAliveMode.ws) {
+      syncEngine.pauseForBackground();
+    }
+  }
+
   Future<void> disconnect() async {
     keepAliveConfig = const KeepAliveConfig();
     await syncEngine.saveKeepAlive(keepAliveConfig);
     await platform.configureKeepAlive(keepAliveConfig);
+    await platform.stopRinging();
     await platform.updateSyncCursor(0, reset: true);
     await syncEngine.clearCredentials();
     serverUrl = '';
@@ -149,6 +168,9 @@ class AppStore extends ChangeNotifier {
     selectedNotificationId = null;
     selectedScheduleId = null;
     selectedSourceId = null;
+    selectionMode = false;
+    selectedNotificationIds = {};
+    ringingScheduleId = null;
     errorMessage = null;
     connectionStatus = ConnectionStatus.unconfigured;
     notifyListeners();
@@ -158,6 +180,51 @@ class AppStore extends ChangeNotifier {
   void _handleNativeEvent(Map<String, dynamic> event) {
     final type = event['type']?.toString() ?? '';
     switch (type) {
+      case 'alarm_ringing':
+        final id = event['schedule_id']?.toString() ?? '';
+        if (id.isNotEmpty) {
+          ringingScheduleId = id;
+          final idx = schedules.indexWhere((s) => s.id == id);
+          if (idx >= 0 && schedules[idx].state != 'ringing') {
+            final copy = List<DinglinSchedule>.from(schedules);
+            final s = copy[idx];
+            copy[idx] = DinglinSchedule(
+              id: s.id,
+              seq: s.seq,
+              sourceId: s.sourceId,
+              kind: s.kind,
+              title: s.title,
+              body: s.body,
+              priority: s.priority,
+              scheduleType: s.scheduleType,
+              fireAt: s.fireAt,
+              cronExpr: s.cronExpr,
+              timezone: s.timezone,
+              durationSec: s.durationSec,
+              targetAt: s.targetAt,
+              remainingSec: s.remainingSec,
+              state: 'ringing',
+              snoozeMinutes: s.snoozeMinutes,
+              soundProfile: s.soundProfile,
+              vibrate: s.vibrate,
+              enabled: s.enabled,
+              nextFireAt: s.nextFireAt,
+              version: s.version,
+              createdAt: s.createdAt,
+              updatedAt: DateTime.now().toUtc(),
+            );
+            schedules = copy;
+          }
+          notifyListeners();
+        }
+        unawaited(_syncOnceSafe());
+      case 'alarm_ringing_stopped':
+        final id = event['schedule_id']?.toString() ?? '';
+        if (id.isEmpty || ringingScheduleId == id) {
+          ringingScheduleId = null;
+          notifyListeners();
+        }
+        unawaited(_syncOnceSafe());
       case 'schedule_fired':
       case 'fcm_wakeup':
       case 'background_schedule_changed':
@@ -244,6 +311,23 @@ class AppStore extends ChangeNotifier {
       sources = results[2] as List<DinglinSource>;
       devices = results[3] as List<DinglinDevice>;
       settings = results[4] as DinglinSettings;
+
+      // Reconcile active ringing state after full refresh
+      DinglinSchedule? activeRinging;
+      for (final s in schedules) {
+        if (s.kind == 'alarm' && s.state == 'ringing') {
+          activeRinging = s;
+          break;
+        }
+      }
+      if (activeRinging != null) {
+        ringingScheduleId = activeRinging.id;
+      } else if (ringingScheduleId != null) {
+        final prevId = ringingScheduleId!;
+        ringingScheduleId = null;
+        unawaited(platform.stopRinging(scheduleId: prevId));
+      }
+
       await platform.updateDndPolicy(
         enabled: settings.dndEnabled,
         start: settings.dndStart,
@@ -261,7 +345,11 @@ class AppStore extends ChangeNotifier {
   void setTab(AppTab tab) {
     if (activeTab == tab) return;
     activeTab = tab;
-    if (tab != AppTab.inbox) selectedNotificationId = null;
+    if (tab != AppTab.inbox) {
+      selectedNotificationId = null;
+      selectionMode = false;
+      selectedNotificationIds = {};
+    }
     if (tab != AppTab.schedules) selectedScheduleId = null;
     notifyListeners();
   }
@@ -292,7 +380,10 @@ class AppStore extends ChangeNotifier {
     selectedNotificationId = id;
     notifyListeners();
     if (id != null) {
-      loadReceipts(id);
+      final target = selectedNotification;
+      if (target != null && target.isUnread) {
+        unawaited(markNotificationRead(id, read: true));
+      }
     }
   }
 
@@ -304,6 +395,48 @@ class AppStore extends ChangeNotifier {
   void closeInspector() {
     selectedNotificationId = null;
     selectedScheduleId = null;
+    notifyListeners();
+  }
+
+  void enterSelectionMode([String? initialId]) {
+    selectionMode = true;
+    selectedNotificationId = null;
+    if (initialId != null) {
+      selectedNotificationIds = {...selectedNotificationIds, initialId};
+    }
+    notifyListeners();
+  }
+
+  void toggleNotificationSelection(String id) {
+    final next = Set<String>.from(selectedNotificationIds);
+    if (!next.remove(id)) {
+      next.add(id);
+    }
+    selectedNotificationIds = next;
+    notifyListeners();
+  }
+
+  bool get allVisibleSelected {
+    final visible = filteredNotifications;
+    if (visible.isEmpty) return false;
+    return visible.every((n) => selectedNotificationIds.contains(n.id));
+  }
+
+  void selectAllVisibleNotifications() {
+    final visibleIds = filteredNotifications.map((n) => n.id).toSet();
+    if (visibleIds.isEmpty) return;
+    if (allVisibleSelected) {
+      selectedNotificationIds = {};
+    } else {
+      selectedNotificationIds = visibleIds;
+    }
+    notifyListeners();
+  }
+
+  void exitSelectionMode() {
+    if (!selectionMode && selectedNotificationIds.isEmpty) return;
+    selectionMode = false;
+    selectedNotificationIds = {};
     notifyListeners();
   }
 
@@ -335,11 +468,27 @@ class AppStore extends ChangeNotifier {
 
   int get unreadCount => notifications.where((n) => n.isUnread).length;
 
+  int readCountForScope({String? sourceId}) => notifications
+      .where((n) => !n.isUnread && (sourceId == null || n.sourceId == sourceId))
+      .length;
+
   int unreadCountForSource(String sourceId) =>
       notifications.where((n) => n.sourceId == sourceId && n.isUnread).length;
 
   int get activeScheduleCount =>
       schedules.where((s) => s.enabled && s.state == 'active').length;
+
+  DinglinSchedule? get ringingAlarm {
+    if (ringingScheduleId != null) {
+      for (final s in schedules) {
+        if (s.id == ringingScheduleId && s.kind == 'alarm') return s;
+      }
+    }
+    for (final s in schedules) {
+      if (s.kind == 'alarm' && s.state == 'ringing') return s;
+    }
+    return null;
+  }
 
   List<DinglinNotification> get filteredNotifications {
     final q = searchQuery.trim().toLowerCase();
@@ -370,6 +519,153 @@ class AppStore extends ChangeNotifier {
       if (n.id == selectedNotificationId) return n;
     }
     return null;
+  }
+
+  Future<void> markNotificationRead(
+    String id, {
+    bool read = true,
+    bool showFeedback = false,
+  }) async {
+    final prev = notifications;
+    final targetStatus = read ? 'read' : 'unread';
+    notifications = notifications
+        .map((n) => n.id == id ? n.copyWith(status: targetStatus) : n)
+        .toList();
+    notifyListeners();
+
+    try {
+      await api.batchNotifications(
+        action: read ? 'read' : 'unread',
+        ids: [id],
+      );
+      if (showFeedback) {
+        showToast(read ? '已标为已看' : '已标为未读');
+      }
+    } catch (e) {
+      notifications = prev;
+      notifyListeners();
+      showToast(e.toString(), isError: true);
+    }
+  }
+
+  Future<void> deleteNotification(String id) async {
+    final prev = notifications;
+    final prevSelected = selectedNotificationId;
+    final prevSelectedIds = Set<String>.from(selectedNotificationIds);
+
+    notifications = notifications.where((n) => n.id != id).toList();
+    if (selectedNotificationId == id) selectedNotificationId = null;
+    if (selectedNotificationIds.contains(id)) {
+      selectedNotificationIds = Set<String>.from(selectedNotificationIds)
+        ..remove(id);
+    }
+    notifyListeners();
+
+    try {
+      await api.deleteNotification(id);
+      showToast('已删除通知');
+    } catch (e) {
+      notifications = prev;
+      selectedNotificationId = prevSelected;
+      selectedNotificationIds = prevSelectedIds;
+      notifyListeners();
+      showToast(e.toString(), isError: true);
+    }
+  }
+
+  Future<void> batchMarkSelectedRead({bool read = true}) async {
+    final ids = selectedNotificationIds.toList();
+    if (ids.isEmpty) return;
+    final idSet = ids.toSet();
+    final prev = notifications;
+    final prevMode = selectionMode;
+    final prevSelectedIds = Set<String>.from(selectedNotificationIds);
+    final targetStatus = read ? 'read' : 'unread';
+
+    notifications = notifications
+        .map((n) => idSet.contains(n.id) ? n.copyWith(status: targetStatus) : n)
+        .toList();
+    selectionMode = false;
+    selectedNotificationIds = {};
+    notifyListeners();
+
+    try {
+      await api.batchNotifications(
+        action: read ? 'read' : 'unread',
+        ids: ids,
+      );
+      showToast(read ? '已标为已看 (${ids.length})' : '已标为未读 (${ids.length})');
+    } catch (e) {
+      notifications = prev;
+      selectionMode = prevMode;
+      selectedNotificationIds = prevSelectedIds;
+      notifyListeners();
+      showToast(e.toString(), isError: true);
+    }
+  }
+
+  Future<void> batchDeleteSelected() async {
+    final ids = selectedNotificationIds.toList();
+    if (ids.isEmpty) return;
+    final idSet = ids.toSet();
+    final prev = notifications;
+    final prevSelected = selectedNotificationId;
+    final prevMode = selectionMode;
+    final prevSelectedIds = Set<String>.from(selectedNotificationIds);
+
+    notifications = notifications.where((n) => !idSet.contains(n.id)).toList();
+    if (prevSelected != null && idSet.contains(prevSelected)) {
+      selectedNotificationId = null;
+    }
+    selectionMode = false;
+    selectedNotificationIds = {};
+    notifyListeners();
+
+    try {
+      await api.batchNotifications(action: 'delete', ids: ids);
+      showToast('已删除 ${ids.length} 条通知');
+    } catch (e) {
+      notifications = prev;
+      selectedNotificationId = prevSelected;
+      selectionMode = prevMode;
+      selectedNotificationIds = prevSelectedIds;
+      notifyListeners();
+      showToast(e.toString(), isError: true);
+    }
+  }
+
+  Future<void> clearReadNotifications({String? sourceId}) async {
+    final prev = notifications;
+    final prevSelected = selectedNotificationId;
+    final prevMode = selectionMode;
+    final prevSelectedIds = Set<String>.from(selectedNotificationIds);
+
+    final removedIds = <String>{};
+    notifications = notifications.where((n) {
+      final shouldRemove =
+          !n.isUnread && (sourceId == null || n.sourceId == sourceId);
+      if (shouldRemove) removedIds.add(n.id);
+      return !shouldRemove;
+    }).toList();
+    if (prevSelected != null && removedIds.contains(prevSelected)) {
+      selectedNotificationId = null;
+    }
+    selectedNotificationIds =
+        selectedNotificationIds.difference(removedIds);
+    selectionMode = false;
+    notifyListeners();
+
+    try {
+      final count = await api.clearReadNotifications(sourceId: sourceId);
+      showToast(count > 0 ? '已清空 $count 条已看通知' : '已清空已看通知');
+    } catch (e) {
+      notifications = prev;
+      selectedNotificationId = prevSelected;
+      selectionMode = prevMode;
+      selectedNotificationIds = prevSelectedIds;
+      notifyListeners();
+      showToast(e.toString(), isError: true);
+    }
   }
 
   Future<void> loadReceipts(String notificationId) async {
@@ -419,6 +715,7 @@ class AppStore extends ChangeNotifier {
       notifications = prev;
       errorMessage = e.toString();
       notifyListeners();
+      showToast(e.toString(), isError: true);
     }
   }
 
@@ -432,6 +729,11 @@ class AppStore extends ChangeNotifier {
   Future<void> updateSchedule(String id, Map<String, dynamic> payload) async {
     final updated = await api.updateSchedule(id, payload);
     _upsertSchedule(updated);
+    if (ringingScheduleId == id && updated.state != 'ringing') {
+      ringingScheduleId = null;
+      await platform.stopRinging(scheduleId: id);
+      notifyListeners();
+    }
     await platform.syncSchedules(schedules);
     showToast('已保存调度');
   }
@@ -439,11 +741,17 @@ class AppStore extends ChangeNotifier {
   Future<void> toggleSchedule(String id, bool enabled) async {
     final updated = await api.toggleSchedule(id, enabled);
     _upsertSchedule(updated);
+    if (ringingScheduleId == id && updated.state != 'ringing') {
+      ringingScheduleId = null;
+      await platform.stopRinging(scheduleId: id);
+      notifyListeners();
+    }
     await platform.syncSchedules(schedules);
   }
 
   Future<void> snoozeSchedule(String id, {int? minutes}) async {
-    await platform.stopRinging();
+    if (ringingScheduleId == id) ringingScheduleId = null;
+    await platform.stopRinging(scheduleId: id);
     final updated = await api.snoozeSchedule(id, minutes: minutes);
     _upsertSchedule(updated);
     await platform.syncSchedules(schedules);
@@ -451,7 +759,8 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> dismissSchedule(String id) async {
-    await platform.stopRinging();
+    if (ringingScheduleId == id) ringingScheduleId = null;
+    await platform.stopRinging(scheduleId: id);
     final updated = await api.dismissSchedule(id);
     _upsertSchedule(updated);
     await platform.syncSchedules(schedules);
@@ -465,9 +774,15 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteSchedule(String id) async {
+    final wasRinging = ringingScheduleId == id ||
+        schedules.any((s) => s.id == id && s.state == 'ringing');
     await api.deleteSchedule(id);
     schedules = schedules.where((s) => s.id != id).toList();
     if (selectedScheduleId == id) selectedScheduleId = null;
+    if (wasRinging) {
+      if (ringingScheduleId == id) ringingScheduleId = null;
+      await platform.stopRinging(scheduleId: id);
+    }
     await platform.syncSchedules(schedules);
     notifyListeners();
     showToast('已删除调度');
@@ -561,7 +876,7 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
     try {
       await api.markAllNotificationsRead(sourceId: sourceId);
-      showToast('已全部标为已读');
+      showToast('已全部标为已看');
     } catch (e) {
       notifications = prev;
       errorMessage = e.toString();
@@ -655,13 +970,64 @@ class AppStore extends ChangeNotifier {
               : n;
           platform.showLocalNotification(effective);
         }
+      case 'notification.deleted':
+        final id = (ev.payload['id'] ?? ev.entityId).toString();
+        if (id.isNotEmpty) {
+          notifications = notifications.where((n) => n.id != id).toList();
+          if (selectedNotificationId == id) selectedNotificationId = null;
+          if (selectedNotificationIds.contains(id)) {
+            selectedNotificationIds = Set<String>.from(selectedNotificationIds)
+              ..remove(id);
+          }
+          notifyListeners();
+        }
       case 'notifications.read_all':
         final targetSrc = ev.payload['source_id']?.toString() ?? '';
         notifications = notifications
-            .map((n) => n.isUnread && (targetSrc.isEmpty || n.sourceId == targetSrc)
+            .map((n) => n.isUnread &&
+                    (targetSrc.isEmpty || n.sourceId == targetSrc)
                 ? n.copyWith(status: 'read')
                 : n)
             .toList();
+        notifyListeners();
+      case 'notifications.batch_updated':
+        final rawIds = ev.payload['ids'];
+        final status = ev.payload['status']?.toString() ?? 'read';
+        if (rawIds is List) {
+          final idSet = rawIds.map((e) => e.toString()).toSet();
+          notifications = notifications
+              .map((n) => idSet.contains(n.id) ? n.copyWith(status: status) : n)
+              .toList();
+          notifyListeners();
+        }
+      case 'notifications.batch_deleted':
+        final rawIds = ev.payload['ids'];
+        if (rawIds is List) {
+          final idSet = rawIds.map((e) => e.toString()).toSet();
+          notifications =
+              notifications.where((n) => !idSet.contains(n.id)).toList();
+          if (selectedNotificationId != null &&
+              idSet.contains(selectedNotificationId)) {
+            selectedNotificationId = null;
+          }
+          selectedNotificationIds = selectedNotificationIds.difference(idSet);
+          notifyListeners();
+        }
+      case 'notifications.cleared_read':
+        final targetSrc = ev.payload['source_id']?.toString() ?? '';
+        final removedIds = <String>{};
+        notifications = notifications.where((n) {
+          final shouldRemove =
+              !n.isUnread && (targetSrc.isEmpty || n.sourceId == targetSrc);
+          if (shouldRemove) removedIds.add(n.id);
+          return !shouldRemove;
+        }).toList();
+        if (selectedNotificationId != null &&
+            removedIds.contains(selectedNotificationId)) {
+          selectedNotificationId = null;
+        }
+        selectedNotificationIds =
+            selectedNotificationIds.difference(removedIds);
         notifyListeners();
       case 'receipt.created':
         if (ev.payload['notification'] is Map<String, dynamic>) {
@@ -682,12 +1048,28 @@ class AppStore extends ChangeNotifier {
       case 'schedule.upsert':
         final sc = DinglinSchedule.fromJson(ev.payload);
         _upsertSchedule(sc);
-        if (sc.state != 'ringing') {
-          platform.stopRinging();
+        if (sc.kind == 'alarm' && sc.state == 'ringing') {
+          final alreadyRinging = ringingScheduleId == sc.id;
+          ringingScheduleId = sc.id;
+          notifyListeners();
+          if (!alreadyRinging) {
+            unawaited(platform.startAlarmRinging(sc));
+          }
+        } else if (ringingScheduleId == sc.id && sc.state != 'ringing') {
+          ringingScheduleId = null;
+          notifyListeners();
+          unawaited(platform.stopRinging(scheduleId: sc.id));
         }
         platform.syncSchedules(schedules);
       case 'schedule.delete':
-        schedules = schedules.where((s) => s.id != ev.entityId).toList();
+        final id = ev.entityId;
+        final wasRinging = ringingScheduleId == id;
+        schedules = schedules.where((s) => s.id != id).toList();
+        if (selectedScheduleId == id) selectedScheduleId = null;
+        if (wasRinging) {
+          ringingScheduleId = null;
+          unawaited(platform.stopRinging(scheduleId: id));
+        }
         platform.syncSchedules(schedules);
         notifyListeners();
       case 'device.test':

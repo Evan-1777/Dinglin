@@ -6,7 +6,9 @@ import 'package:dinglin_client/models/models.dart';
 import 'package:dinglin_client/platform/platform_bridge.dart';
 import 'package:dinglin_client/services/api_client.dart';
 import 'package:dinglin_client/state/app_store.dart';
+import 'package:dinglin_client/widgets/alarm_ringing_overlay.dart';
 import 'package:dinglin_client/widgets/app_shell.dart';
+import 'package:dinglin_client/widgets/apple_primitives.dart';
 import 'package:dinglin_client/widgets/schedule_editor_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,6 +33,7 @@ class _FakePlatform implements PlatformBridge {
   final List<KeepAliveConfig> keepAliveConfigs = [];
   final List<String> requestedPermissions = [];
   int stopRingingCalls = 0;
+  final List<String?> stopRingingScheduleIds = [];
   int startAlarmRingingCalls = 0;
   int resetCursorCalls = 0;
   bool autoStartSupported = false;
@@ -61,6 +64,7 @@ class _FakePlatform implements PlatformBridge {
   @override
   Future<void> stopRinging({String? scheduleId}) async {
     stopRingingCalls++;
+    stopRingingScheduleIds.add(scheduleId);
   }
   @override
   Future<void> setAppForeground(bool foreground) async {
@@ -812,21 +816,22 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
 
-    // Gateway disconnect action present when connected
-    expect(find.text('断开'), findsOneWidget);
+    // Gateway disconnect icon button present when connected
+    expect(find.byTooltip('断开网关'), findsOneWidget);
 
     // Android Reception Policy & Permissions panel
     expect(find.text('接收策略与权限'), findsOneWidget);
     expect(find.text('忽略电池优化'), findsOneWidget);
     expect(find.text('锁屏全屏提醒'), findsOneWidget);
+    expect(find.text('后台自启动'), findsNothing);
     await tester.tap(find.text('定时拉取'));
     await tester.pump();
     expect(find.text('5m'), findsOneWidget);
     expect(find.text('15m'), findsOneWidget);
     expect(find.text('30m'), findsOneWidget);
 
-    // Single-permission button invokes requestPermission once for that key
-    await tester.tap(find.text('授权').first);
+    // Single-permission SVG button invokes requestPermission once for that key
+    await tester.tap(find.byTooltip('授权 忽略电池优化'));
     await tester.pump();
     expect(fakePlatform.requestedPermissions, ['battery_optimization']);
 
@@ -899,9 +904,451 @@ void main() {
     expect(find.text('忽略电池优化'), findsNothing);
     expect(find.text('定时拉取'), findsNothing);
 
-    await tester.tap(find.text('授权'));
+    await tester.tap(find.byTooltip('授权 浏览器通知'));
     await tester.pump();
     expect(fakePlatform.requestedPermissions, ['notifications']);
+
+    store.dispose();
+  });
+
+  testWidgets(
+      'AppleTopBar trailing buttons strictly align to right edge on 390px and 1280px',
+      (tester) async {
+    final store = AppStore(platformBridge: _FakePlatform());
+    store.connectionStatus = ConnectionStatus.connected;
+
+    for (final size in const [Size(390, 844), Size(1280, 800)]) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+
+      // Inbox tab
+      store.setTab(AppTab.inbox);
+      await tester.pumpWidget(DinglinApp(store: store));
+      await tester.pump();
+      final inboxTopBar = tester.getRect(find.byType(AppleTopBar).first);
+      final refreshBtn = tester.getRect(find.byTooltip('刷新'));
+      expect(
+        (inboxTopBar.right - 20.0 - refreshBtn.right).abs(),
+        lessThanOrEqualTo(1.0),
+        reason: 'Inbox refresh button misaligned at width ${size.width}',
+      );
+
+      // Schedules tab
+      store.setTab(AppTab.schedules);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      final schedTopBar = tester.getRect(find.byType(AppleTopBar).first);
+      final addBtn = tester.getRect(find.byTooltip('新建调度'));
+      expect(
+        (schedTopBar.right - 20.0 - addBtn.right).abs(),
+        lessThanOrEqualTo(1.0),
+        reason: 'Schedules add button misaligned at width ${size.width}',
+      );
+
+      // Settings tab renders cleanly without overflow
+      store.setTab(AppTab.settings);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(tester.takeException(), isNull);
+    }
+
+    addTearDown(tester.view.resetPhysicalSize);
+    store.dispose();
+  });
+
+  testWidgets(
+      'Alarm continuous ringing loop starts overlay, ignores unrelated upserts, and dismisses cleanly',
+      (tester) async {
+    final ws = _FakeWsChannel();
+    final fakePlatform = _FakePlatform(keepAliveSupported: true);
+    var dismissCalled = false;
+
+    final mockHttp = MockClient((req) async {
+      if (req.url.path == '/api/v1/sync') {
+        return http.Response(
+          jsonEncode({'events': [], 'latest_seq': 1, 'has_more': false}),
+          200,
+        );
+      }
+      if (req.url.path == '/api/v1/schedules/al1/dismiss' &&
+          req.method == 'POST') {
+        dismissCalled = true;
+        return http.Response(
+          jsonEncode({
+            'schedule': {
+              'id': 'al1',
+              'seq': 12,
+              'kind': 'alarm',
+              'title': '起床闹钟',
+              'body': '晨跑时间',
+              'priority': 'critical',
+              'schedule_type': 'once',
+              'state': 'completed',
+              'snooze_minutes': 10,
+              'enabled': false,
+              'created_at': '2026-11-27T00:00:00Z',
+              'updated_at': '2026-11-27T07:01:00Z',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    final store = AppStore(
+      apiClient: ApiClient(
+        baseUrl: 'http://localhost:8080',
+        token: 'tok',
+        httpClient: mockHttp,
+      ),
+      platformBridge: fakePlatform,
+      wsFactory: (_) => ws,
+    );
+    await store.syncEngine.start();
+
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(DinglinApp(store: store));
+    await tester.pump();
+    expect(find.byType(AlarmRingingOverlay), findsNothing);
+
+    // 1. Push ringing alarm event via WS
+    ws.pushServerEvent({
+      'type': 'event',
+      'seq': 10,
+      'event_type': 'schedule.upsert',
+      'entity_id': 'al1',
+      'data': {
+        'id': 'al1',
+        'seq': 10,
+        'kind': 'alarm',
+        'title': '起床闹钟',
+        'body': '晨跑时间',
+        'priority': 'critical',
+        'schedule_type': 'once',
+        'state': 'ringing',
+        'snooze_minutes': 10,
+        'enabled': true,
+        'created_at': '2026-11-27T00:00:00Z',
+        'updated_at': '2026-11-27T07:00:00Z',
+      },
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(fakePlatform.startAlarmRingingCalls, 1);
+    expect(find.byType(AlarmRingingOverlay), findsOneWidget);
+    expect(find.text('起床闹钟'), findsOneWidget);
+
+    // 2. Unrelated schedule.upsert MUST NOT call stopRinging
+    ws.pushServerEvent({
+      'type': 'event',
+      'seq': 11,
+      'event_type': 'schedule.upsert',
+      'entity_id': 'other-sc',
+      'data': {
+        'id': 'other-sc',
+        'seq': 11,
+        'kind': 'scheduled_notification',
+        'title': '午休提醒',
+        'priority': 'normal',
+        'schedule_type': 'once',
+        'state': 'active',
+        'enabled': true,
+        'created_at': '2026-11-27T00:00:00Z',
+        'updated_at': '2026-11-27T07:00:10Z',
+      },
+    });
+    await tester.pump();
+    expect(fakePlatform.stopRingingCalls, 0);
+    expect(find.byType(AlarmRingingOverlay), findsOneWidget);
+
+    // 3. Tap Dismiss button -> calls /dismiss + stopRinging(scheduleId: 'al1') and closes overlay
+    await tester.tap(find.text('关闭'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(dismissCalled, isTrue);
+    expect(fakePlatform.stopRingingCalls, 1);
+    expect(fakePlatform.stopRingingScheduleIds.last, 'al1');
+    expect(find.byType(AlarmRingingOverlay), findsNothing);
+
+    store.dispose();
+  });
+
+  testWidgets(
+      'Minimalist inbox auto-reads via batch, supports batch delete, clear-read, custom actions & WS events',
+      (tester) async {
+    final ws = _FakeWsChannel();
+    final batchCalls = <Map<String, dynamic>>[];
+    var receiptCalls = 0;
+    var clearReadCalled = false;
+
+    final mockHttp = MockClient((req) async {
+      if (req.url.path == '/api/v1/sync') {
+        return http.Response(
+          jsonEncode({'events': [], 'latest_seq': 1, 'has_more': false}),
+          200,
+        );
+      }
+      if (req.url.path == '/api/v1/notifications/batch' &&
+          req.method == 'POST') {
+        final decoded = jsonDecode(req.body) as Map<String, dynamic>;
+        batchCalls.add(decoded);
+        final ids = decoded['ids'] as List;
+        return http.Response(
+          jsonEncode({'action': decoded['action'], 'affected': ids.length}),
+          200,
+        );
+      }
+      if (req.url.path == '/api/v1/notifications/clear-read' &&
+          req.method == 'POST') {
+        clearReadCalled = true;
+        return http.Response(jsonEncode({'deleted': 1}), 200);
+      }
+      if (req.url.path.endsWith('/receipt')) {
+        receiptCalls++;
+        return http.Response(
+          jsonEncode({
+            'receipt': {
+              'id': 'rc1',
+              'notification_id': 'n1',
+              'action_id': 'approve',
+              'action_label': '通过审批',
+              'created_at': '2026-11-27T08:00:00Z',
+            },
+            'notification': {
+              'id': 'n1',
+              'seq': 1,
+              'priority': 'normal',
+              'title': 'PR #42 待审批',
+              'body': 'CI 已通过',
+              'status': 'acked',
+              'actions': [
+                {'id': 'approve', 'label': '通过审批'},
+              ],
+              'created_at': '2026-11-27T08:00:00Z',
+              'updated_at': '2026-11-27T08:00:00Z',
+            },
+          }),
+          201,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    final now = DateTime.now().toUtc();
+    final store = AppStore(
+      apiClient: ApiClient(
+        baseUrl: 'http://localhost:8080',
+        token: 'tok',
+        httpClient: mockHttp,
+      ),
+      platformBridge: _FakePlatform(),
+      wsFactory: (_) => ws,
+    );
+    await store.syncEngine.start();
+    store.notifications = [
+      DinglinNotification(
+        id: 'n1',
+        seq: 1,
+        priority: 'normal',
+        title: 'PR #42 待审批',
+        body: 'CI 已通过',
+        status: 'unread',
+        actions: const [QuickAction(id: 'approve', label: '通过审批')],
+        createdAt: now,
+        updatedAt: now,
+      ),
+      DinglinNotification(
+        id: 'n2',
+        seq: 2,
+        priority: 'normal',
+        title: '磁盘备份完成',
+        body: '快照已上传',
+        status: 'read',
+        createdAt: now,
+        updatedAt: now,
+      ),
+      DinglinNotification(
+        id: 'n3',
+        seq: 3,
+        priority: 'normal',
+        title: '构建警告',
+        body: '依赖即将过期',
+        status: 'unread',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    ];
+
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(DinglinApp(store: store));
+    await tester.pump();
+
+    // Built-in noisy actions & receipt timeline are gone; custom action remains
+    expect(find.text('确认'), findsNothing);
+    expect(find.text('忽略'), findsNothing);
+    expect(find.text('延后'), findsNothing);
+    expect(find.text('通过审批'), findsOneWidget);
+
+    // Tap unread notification -> opens inspector and auto-marks read via /batch (NOT /receipt)
+    await tester.tap(find.text('PR #42 待审批'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('通知详情'), findsOneWidget);
+    expect(find.text('回执记录'), findsNothing);
+    expect(store.notifications.first.status, 'read');
+    expect(receiptCalls, 0);
+    expect(batchCalls.last['action'], 'read');
+    expect(batchCalls.last['ids'], ['n1']);
+
+    // Custom action still triggers /receipt
+    await tester.tap(find.text('通过审批').first);
+    await tester.pump();
+    expect(receiptCalls, 1);
+
+    // Enter batch selection mode, clear read notifications
+    await tester.tap(find.byTooltip('批量管理'));
+    await tester.pump();
+    expect(find.text('已选 0 项'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('清空已看'));
+    await tester.pump();
+    await tester.tap(find.text('清空'));
+    await tester.pump();
+    expect(clearReadCalled, isTrue);
+    expect(store.notifications.map((e) => e.id).toList(), ['n3']);
+
+    // Re-enter batch mode, select all, batch delete
+    await tester.tap(find.byTooltip('批量管理'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('全选'));
+    await tester.pump();
+    expect(find.text('已选 1 项'), findsOneWidget);
+    await tester.tap(find.text('删除'));
+    await tester.pump();
+    await tester.tap(find.text('删除').last);
+    await tester.pump();
+    expect(batchCalls.last['action'], 'delete');
+    expect(batchCalls.last['ids'], ['n3']);
+    expect(store.notifications, isEmpty);
+
+    // WS notification.deleted & notifications.batch_deleted events sync cleanly
+    store.notifications = [
+      DinglinNotification(
+        id: 'n4',
+        seq: 4,
+        priority: 'normal',
+        title: 'Remote A',
+        body: '',
+        status: 'unread',
+        createdAt: now,
+        updatedAt: now,
+      ),
+      DinglinNotification(
+        id: 'n5',
+        seq: 5,
+        priority: 'normal',
+        title: 'Remote B',
+        body: '',
+        status: 'unread',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    ];
+    ws.pushServerEvent({
+      'type': 'event',
+      'seq': 20,
+      'event_type': 'notification.deleted',
+      'entity_id': 'n4',
+      'data': {'id': 'n4'},
+    });
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(store.notifications.map((e) => e.id).toList(), ['n5']);
+
+    ws.pushServerEvent({
+      'type': 'event',
+      'seq': 21,
+      'event_type': 'notifications.batch_deleted',
+      'entity_id': 'batch',
+      'data': {
+        'ids': ['n5'],
+      },
+    });
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(store.notifications, isEmpty);
+
+    store.dispose();
+  });
+
+  testWidgets(
+      'Android lifecycle paused/resumed updates foreground flag and auto-start row toggles by capability',
+      (tester) async {
+    final fakePlatform = _FakePlatform(keepAliveSupported: true)
+      ..autoStartSupported = true;
+    final store = AppStore(
+      apiClient: ApiClient(
+        baseUrl: 'http://localhost:8080',
+        token: 'tok',
+        httpClient: MockClient((_) async => http.Response('{}', 200)),
+      ),
+      platformBridge: fakePlatform,
+      wsFactory: (_) => _FakeWsChannel(),
+    );
+    store.supportsAutoStartSettings = true;
+    store.activeTab = AppTab.settings;
+
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(DinglinApp(store: store));
+    await tester.pump();
+    expect(find.text('后台自启动'), findsOneWidget);
+    await tester.tap(find.text('后台自启动'));
+    await tester.pump();
+    expect(fakePlatform.requestedPermissions, ['auto_start']);
+
+    // Lifecycle: inactive/hidden ignored, paused sets false, resumed sets true
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(fakePlatform.foregroundEvents, isEmpty);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    expect(fakePlatform.foregroundEvents, isEmpty);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    expect(fakePlatform.foregroundEvents, [false]);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(fakePlatform.foregroundEvents, [false, true]);
+
+    // Alarm form hides priority selector and has zero ChoiceChip
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ScheduleEditorModal(store: store)),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(ChoiceChip), findsNothing);
+    expect(find.text('级别'), findsNothing);
+    await tester.tap(find.text('定时通知'));
+    await tester.pump();
+    expect(find.text('级别'), findsOneWidget);
 
     store.dispose();
   });

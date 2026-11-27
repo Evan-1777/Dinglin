@@ -36,6 +36,15 @@ enum AppIconName {
   checkCircle,
   sliders,
   filter,
+  checkSquare,
+  square,
+  listChecks,
+  bellOff,
+  alarmClock,
+  eraser,
+  arrowLeft,
+  qrCode,
+  rocket,
 }
 
 /// Crisp 1.5px stroke Apple HIG SVG icon component with mandatory semantics.
@@ -186,6 +195,48 @@ class AppIcon extends StatelessWidget {
         '<line x1="17" y1="16" x2="23" y2="16"/>',
     AppIconName.filter:
         '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+    AppIconName.checkSquare:
+        '<rect x="3" y="3" width="18" height="18" rx="4"/>'
+        '<polyline points="8.5 12.2 10.8 14.5 15.8 9.5"/>',
+    AppIconName.square:
+        '<rect x="3" y="3" width="18" height="18" rx="4"/>',
+    AppIconName.listChecks:
+        '<path d="m3 17 2 2 4-4"/>'
+        '<path d="m3 7 2 2 4-4"/>'
+        '<path d="M13 6h8"/>'
+        '<path d="M13 12h8"/>'
+        '<path d="M13 18h8"/>',
+    AppIconName.bellOff:
+        '<path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/>'
+        '<path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/>'
+        '<path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'
+        '<line x1="2" y1="2" x2="22" y2="22"/>',
+    AppIconName.alarmClock:
+        '<circle cx="12" cy="13" r="8"/>'
+        '<path d="M12 9v4l2.5 1.5"/>'
+        '<path d="M5 3 2 6"/>'
+        '<path d="m22 6-3-3"/>'
+        '<path d="M6.38 18.7 4 21"/>'
+        '<path d="M17.64 18.67 20 21"/>',
+    AppIconName.eraser:
+        '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/>'
+        '<path d="M22 21H7"/>'
+        '<path d="m5 11 9 9"/>',
+    AppIconName.arrowLeft:
+        '<line x1="19" y1="12" x2="5" y2="12"/>'
+        '<polyline points="12 19 5 12 12 5"/>',
+    AppIconName.qrCode:
+        '<rect x="3" y="3" width="7" height="7" rx="1"/>'
+        '<rect x="14" y="3" width="7" height="7" rx="1"/>'
+        '<rect x="3" y="14" width="7" height="7" rx="1"/>'
+        '<path d="M14 14h3v3h-3z"/>'
+        '<path d="M20 14v3"/>'
+        '<path d="M14 20h7"/>',
+    AppIconName.rocket:
+        '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>'
+        '<path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>'
+        '<path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>'
+        '<path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
   };
 }
 

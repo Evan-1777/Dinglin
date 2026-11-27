@@ -171,6 +171,36 @@ class ApiClient {
     return (data['updated'] as num?)?.toInt() ?? 0;
   }
 
+  Future<void> deleteNotification(String id) async {
+    await _request('DELETE', '/api/v1/notifications/$id');
+  }
+
+  Future<int> batchNotifications({
+    required String action,
+    required List<String> ids,
+  }) async {
+    final data = await _request(
+      'POST',
+      '/api/v1/notifications/batch',
+      body: {
+        'action': action,
+        'ids': ids,
+      },
+    );
+    return (data['affected'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<int> clearReadNotifications({String? sourceId}) async {
+    final data = await _request(
+      'POST',
+      '/api/v1/notifications/clear-read',
+      body: {
+        if (sourceId != null && sourceId.isNotEmpty) 'source_id': sourceId,
+      },
+    );
+    return (data['deleted'] as num?)?.toInt() ?? 0;
+  }
+
   Future<(DinglinReceipt, DinglinNotification)> submitReceipt({
     required String notificationId,
     required String actionId,

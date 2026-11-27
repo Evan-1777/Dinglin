@@ -7,9 +7,11 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
     required this.bgCanvas,
     required this.bgSurface,
     required this.bgSurfaceSecondary,
+    required this.bgCardElevated,
     required this.bgRail,
     required this.bgTopbar,
     required this.bgHover,
+    required this.bgPressed,
     required this.bgSelected,
     required this.inkPrimary,
     required this.inkSecondary,
@@ -34,9 +36,11 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
   final Color bgCanvas;
   final Color bgSurface;
   final Color bgSurfaceSecondary;
+  final Color bgCardElevated;
   final Color bgRail;
   final Color bgTopbar;
   final Color bgHover;
+  final Color bgPressed;
   final Color bgSelected;
   final Color inkPrimary;
   final Color inkSecondary;
@@ -60,14 +64,19 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
   static const double radiusSm = 8;
   static const double radiusMd = 12;
   static const double radiusLg = 16;
+  static const double radiusSheet = 20;
   static const double radiusPill = 999;
 
   static const double sidebarWidth = 232;
   static const double railWidth = 68;
   static const double inspectorWidth = 348;
   static const double topbarHeight = 56;
-  static const double blurSigma = 22;
-  static const Duration motion = Duration(milliseconds: 180);
+  static const double blurSigma = 24;
+
+  static const Duration motionFast = Duration(milliseconds: 120);
+  static const Duration motion = Duration(milliseconds: 200);
+  static const Duration motionSlow = Duration(milliseconds: 280);
+  static const Curve motionCurve = Curves.easeOutCubic;
 
   static const TextStyle tabular = TextStyle(
     fontFeatures: [FontFeature.tabularFigures()],
@@ -77,15 +86,17 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
     bgCanvas: Color(0xFFF5F5F7),
     bgSurface: Color(0xFFFFFFFF),
     bgSurfaceSecondary: Color(0xFFF2F2F7),
-    bgRail: Color(0xC7F5F5F7),
-    bgTopbar: Color(0xC2FFFFFF),
+    bgCardElevated: Color(0xFFFFFFFF),
+    bgRail: Color(0xD4F5F5F7),
+    bgTopbar: Color(0xCCFFFFFF),
     bgHover: Color(0x0A000000),
+    bgPressed: Color(0x12000000),
     bgSelected: Color(0x1A007AFF),
     inkPrimary: Color(0xFF1D1D1F),
     inkSecondary: Color(0xFF6E6E73),
     inkTertiary: Color(0xFF8E8E93),
     borderHairline: Color(0x14000000),
-    borderSpecular: Color(0xBFFFFFFF),
+    borderSpecular: Color(0xCCFFFFFF),
     accent: Color(0xFF007AFF),
     accentHover: Color(0xFF0066D6),
     critical: Color(0xFFFF3B30),
@@ -94,18 +105,18 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
     warningBg: Color(0x1FFF9500),
     success: Color(0xFF34C759),
     successBg: Color(0x1F34C759),
-    scrim: Color(0x57000000),
+    scrim: Color(0x52000000),
     cardShadow: [
-      BoxShadow(color: Color(0x0A000000), blurRadius: 2, offset: Offset(0, 1)),
-      BoxShadow(color: Color(0x08000000), blurRadius: 12, offset: Offset(0, 4)),
+      BoxShadow(color: Color(0x08000000), blurRadius: 2, offset: Offset(0, 1)),
+      BoxShadow(color: Color(0x0A000000), blurRadius: 14, offset: Offset(0, 4)),
     ],
     floatShadow: [
-      BoxShadow(color: Color(0x1A000000), blurRadius: 30, offset: Offset(0, 10)),
-      BoxShadow(color: Color(0x0F000000), blurRadius: 3, offset: Offset(0, 1)),
+      BoxShadow(color: Color(0x1C000000), blurRadius: 32, offset: Offset(0, 12)),
+      BoxShadow(color: Color(0x0D000000), blurRadius: 4, offset: Offset(0, 1)),
     ],
     modalShadow: [
-      BoxShadow(color: Color(0x38000000), blurRadius: 60, offset: Offset(0, 24)),
-      BoxShadow(color: Color(0x14000000), blurRadius: 10, offset: Offset(0, 2)),
+      BoxShadow(color: Color(0x36000000), blurRadius: 64, offset: Offset(0, 24)),
+      BoxShadow(color: Color(0x14000000), blurRadius: 12, offset: Offset(0, 3)),
     ],
     isDark: false,
   );
@@ -114,15 +125,17 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
     bgCanvas: Color(0xFF000000),
     bgSurface: Color(0xFF1C1C1E),
     bgSurfaceSecondary: Color(0xFF2C2C2E),
-    bgRail: Color(0xC71C1C1E),
-    bgTopbar: Color(0xC21C1C1E),
+    bgCardElevated: Color(0xFF242426),
+    bgRail: Color(0xD41C1C1E),
+    bgTopbar: Color(0xCC1C1C1E),
     bgHover: Color(0x0FFFFFFF),
+    bgPressed: Color(0x1AFFFFFF),
     bgSelected: Color(0x2E0A84FF),
     inkPrimary: Color(0xFFF5F5F7),
     inkSecondary: Color(0xFF98989D),
     inkTertiary: Color(0xFF636366),
     borderHairline: Color(0x1AFFFFFF),
-    borderSpecular: Color(0x1FFFFFFF),
+    borderSpecular: Color(0x24FFFFFF),
     accent: Color(0xFF0A84FF),
     accentHover: Color(0xFF409CFF),
     critical: Color(0xFFFF453A),
@@ -131,15 +144,16 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
     warningBg: Color(0x29FF9F0A),
     success: Color(0xFF30D158),
     successBg: Color(0x2930D158),
-    scrim: Color(0x94000000),
+    scrim: Color(0x8F000000),
     cardShadow: [
-      BoxShadow(color: Color(0x40000000), blurRadius: 3, offset: Offset(0, 1)),
+      BoxShadow(color: Color(0x47000000), blurRadius: 4, offset: Offset(0, 1)),
+      BoxShadow(color: Color(0x26000000), blurRadius: 16, offset: Offset(0, 6)),
     ],
     floatShadow: [
-      BoxShadow(color: Color(0x73000000), blurRadius: 32, offset: Offset(0, 12)),
+      BoxShadow(color: Color(0x7A000000), blurRadius: 36, offset: Offset(0, 14)),
     ],
     modalShadow: [
-      BoxShadow(color: Color(0xA6000000), blurRadius: 70, offset: Offset(0, 28)),
+      BoxShadow(color: Color(0xAD000000), blurRadius: 72, offset: Offset(0, 28)),
     ],
     isDark: true,
   );
@@ -186,9 +200,11 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
     Color? bgCanvas,
     Color? bgSurface,
     Color? bgSurfaceSecondary,
+    Color? bgCardElevated,
     Color? bgRail,
     Color? bgTopbar,
     Color? bgHover,
+    Color? bgPressed,
     Color? bgSelected,
     Color? inkPrimary,
     Color? inkSecondary,
@@ -213,9 +229,11 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
       bgCanvas: bgCanvas ?? this.bgCanvas,
       bgSurface: bgSurface ?? this.bgSurface,
       bgSurfaceSecondary: bgSurfaceSecondary ?? this.bgSurfaceSecondary,
+      bgCardElevated: bgCardElevated ?? this.bgCardElevated,
       bgRail: bgRail ?? this.bgRail,
       bgTopbar: bgTopbar ?? this.bgTopbar,
       bgHover: bgHover ?? this.bgHover,
+      bgPressed: bgPressed ?? this.bgPressed,
       bgSelected: bgSelected ?? this.bgSelected,
       inkPrimary: inkPrimary ?? this.inkPrimary,
       inkSecondary: inkSecondary ?? this.inkSecondary,
@@ -246,9 +264,11 @@ class AppleTokens extends ThemeExtension<AppleTokens> {
       bgSurface: Color.lerp(bgSurface, other.bgSurface, t)!,
       bgSurfaceSecondary:
           Color.lerp(bgSurfaceSecondary, other.bgSurfaceSecondary, t)!,
+      bgCardElevated: Color.lerp(bgCardElevated, other.bgCardElevated, t)!,
       bgRail: Color.lerp(bgRail, other.bgRail, t)!,
       bgTopbar: Color.lerp(bgTopbar, other.bgTopbar, t)!,
       bgHover: Color.lerp(bgHover, other.bgHover, t)!,
+      bgPressed: Color.lerp(bgPressed, other.bgPressed, t)!,
       bgSelected: Color.lerp(bgSelected, other.bgSelected, t)!,
       inkPrimary: Color.lerp(inkPrimary, other.inkPrimary, t)!,
       inkSecondary: Color.lerp(inkSecondary, other.inkSecondary, t)!,

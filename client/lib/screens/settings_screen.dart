@@ -138,7 +138,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final start = _dndStartCtrl.text.trim();
     final end = _dndEndCtrl.text.trim();
     if (!_hhmmRe.hasMatch(start) || !_hhmmRe.hasMatch(end)) {
-      widget.store.showToast('免打扰时间格式须为 HH:MM（00:00–23:59）', isError: true);
+      widget.store.showToast('免打扰时间格式须为 HH:MM', isError: true);
       return;
     }
     final snooze = int.tryParse(_snoozeCtrl.text.trim()) ?? 0;
@@ -148,7 +148,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     final retention = int.tryParse(_retentionCtrl.text.trim()) ?? 0;
     if (retention < 1 || retention > 3650) {
-      widget.store.showToast('消息保留天数须在 1–3650 天之间', isError: true);
+      widget.store.showToast('保留天数须在 1–3650 天之间', isError: true);
       return;
     }
     final next = widget.store.settings.copyWith(
@@ -174,126 +174,121 @@ class _SettingsScreenState extends State<SettingsScreen> {
     var kind = existing?.kind ?? 'webhook';
     var color = existing?.color ?? '#007AFF';
 
-    final created = await showDialog<dynamic>(
+    final created = await showAppleAdaptiveModal<dynamic>(
       context: context,
+      title: isEdit ? '编辑消息来源' : '新建消息来源',
+      showClose: true,
+      maxWidth: 420,
       builder: (ctx) {
         final t = AppleTokens.of(ctx);
         return StatefulBuilder(
-          builder: (ctx, setLocal) => AppleDialogShell(
-            title: isEdit ? '编辑消息来源' : '新建消息来源',
-            showClose: true,
-            maxWidth: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (!isEdit) ...[
-                  AppleSegmentedControl<String>(
-                    value: kind,
-                    options: const [
-                      (value: 'webhook', label: 'Webhook'),
-                      (value: 'agent', label: 'Agent / MCP'),
-                    ],
-                    onChanged: (v) => setLocal(() => kind = v),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                TextField(
-                  controller: nameCtrl,
-                  decoration:
-                      appleInputDecoration(t, hint: '名称（如 GitHub Actions）'),
-                ),
-                if (!isEdit) ...[
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: slugCtrl,
-                    decoration: appleInputDecoration(
-                      t,
-                      hint: '标识（小写字母/数字，如 github-ci）',
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                TextField(
-                  controller: cbCtrl,
-                  decoration: appleInputDecoration(t, hint: '回调 URL（可选）'),
+          builder: (ctx, setLocal) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!isEdit) ...[
+                AppleSegmentedControl<String>(
+                  value: kind,
+                  options: const [
+                    (value: 'webhook', label: 'Webhook'),
+                    (value: 'agent', label: 'Agent / MCP'),
+                  ],
+                  onChanged: (v) => setLocal(() => kind = v),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    for (final hex in const [
-                      '#007AFF',
-                      '#34C759',
-                      '#FF9500',
-                      '#FF3B30',
-                      '#AF52DE',
-                    ])
-                      GestureDetector(
-                        onTap: () => setLocal(() => color = hex),
-                        child: Container(
-                          width: 24,
-                          height: 24,
-                          margin: const EdgeInsets.only(right: 8),
-                          decoration: BoxDecoration(
-                            color: parseHexColor(hex),
-                            shape: BoxShape.circle,
-                            border: color == hex
-                                ? Border.all(color: t.inkPrimary, width: 2)
-                                : null,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('取消'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: t.accent,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: () async {
-                        final name = nameCtrl.text.trim();
-                        if (name.isEmpty) {
-                          widget.store.showToast('请输入来源名称', isError: true);
-                          return;
-                        }
-                        try {
-                          if (isEdit) {
-                            await widget.store.updateSource(
-                              existing.id,
-                              name: name,
-                              color: color,
-                              callbackUrl: cbCtrl.text.trim(),
-                            );
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          } else {
-                            final res = await widget.store.createSource(
-                              name: name,
-                              slug: slugCtrl.text.trim(),
-                              kind: kind,
-                              color: color,
-                              callbackUrl: cbCtrl.text.trim(),
-                            );
-                            if (ctx.mounted) Navigator.pop(ctx, res);
-                          }
-                        } catch (e) {
-                          widget.store.showToast(e.toString(), isError: true);
-                        }
-                      },
-                      child: Text(isEdit ? '保存' : '创建'),
-                    ),
-                  ],
+              ],
+              TextField(
+                controller: nameCtrl,
+                decoration: appleInputDecoration(t, hint: '来源名称'),
+              ),
+              if (!isEdit) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: slugCtrl,
+                  decoration: appleInputDecoration(t, hint: '来源标识'),
                 ),
               ],
-            ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: cbCtrl,
+                decoration: appleInputDecoration(t, hint: '回调 URL'),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  for (final hex in const [
+                    '#007AFF',
+                    '#34C759',
+                    '#FF9500',
+                    '#FF3B30',
+                    '#AF52DE',
+                  ])
+                    ApplePressable(
+                      onTap: () => setLocal(() => color = hex),
+                      pressedScale: 0.9,
+                      builder: (context, _, _) => Container(
+                        width: 24,
+                        height: 24,
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          color: parseHexColor(hex),
+                          shape: BoxShape.circle,
+                          border: color == hex
+                              ? Border.all(color: t.inkPrimary, width: 2)
+                              : null,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('取消'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: t.accent,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () async {
+                      final name = nameCtrl.text.trim();
+                      if (name.isEmpty) {
+                        widget.store.showToast('请输入来源名称', isError: true);
+                        return;
+                      }
+                      try {
+                        if (isEdit) {
+                          await widget.store.updateSource(
+                            existing.id,
+                            name: name,
+                            color: color,
+                            callbackUrl: cbCtrl.text.trim(),
+                          );
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        } else {
+                          final res = await widget.store.createSource(
+                            name: name,
+                            slug: slugCtrl.text.trim(),
+                            kind: kind,
+                            color: color,
+                            callbackUrl: cbCtrl.text.trim(),
+                          );
+                          if (ctx.mounted) Navigator.pop(ctx, res);
+                        }
+                      } catch (e) {
+                        widget.store.showToast(e.toString(), isError: true);
+                      }
+                    },
+                    child: Text(isEdit ? '保存' : '创建'),
+                  ),
+                ],
+              ),
+            ],
           ),
         );
       },
@@ -320,8 +315,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final isAgent = src.kind == 'agent';
     var selectedTab = isAgent ? 'http' : 'webhook';
 
-    await showDialog<void>(
+    await showAppleAdaptiveModal<void>(
       context: context,
+      title: '${src.name} · 接入片段',
+      showClose: true,
+      maxWidth: 500,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
@@ -357,50 +355,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         '  -H "Content-Type: application/json" \\\n'
                         '  -d \'{"title":"审批提醒","priority":"critical","actions":[{"id":"ack","label":"确认"}]}\'');
 
-            return AppleDialogShell(
-              title: '${src.name} · 接入片段',
-              showClose: true,
-              maxWidth: 500,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: AppleSegmentedControl<String>(
-                      value: selectedTab,
-                      options: isAgent
-                          ? const [
-                              (value: 'http', label: 'MCP HTTP'),
-                              (value: 'stdio', label: 'MCP Stdio'),
-                            ]
-                          : const [
-                              (value: 'webhook', label: 'Webhook'),
-                              (value: 'rest', label: 'REST API'),
-                            ],
-                      onChanged: (v) => setLocal(() => selectedTab = v),
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: AppleSegmentedControl<String>(
+                    value: selectedTab,
+                    options: isAgent
+                        ? const [
+                            (value: 'http', label: 'MCP HTTP'),
+                            (value: 'stdio', label: 'MCP Stdio'),
+                          ]
+                        : const [
+                            (value: 'webhook', label: 'Webhook'),
+                            (value: 'rest', label: 'REST API'),
+                          ],
+                    onChanged: (v) => setLocal(() => selectedTab = v),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _CopyBox(
+                  label: '${src.slug} · ${src.tokenPrefix}…',
+                  value: code,
+                  onCopied: () => widget.store.showToast('已复制片段'),
+                ),
+                const SizedBox(height: 14),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: t.accent,
+                      foregroundColor: Colors.white,
                     ),
+                    child: const Text('完成'),
                   ),
-                  const SizedBox(height: 12),
-                  _CopyBox(
-                    label: '${src.slug} · Token 前缀 ${src.tokenPrefix}…',
-                    value: code,
-                    onCopied: () => widget.store.showToast('已复制片段'),
-                  ),
-                  const SizedBox(height: 14),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: t.accent,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('完成'),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             );
           },
         );
@@ -410,56 +403,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _openRenameDeviceDialog(DinglinDevice dev) async {
     final ctrl = TextEditingController(text: dev.name);
-    await showDialog<void>(
+    await showAppleAdaptiveModal<void>(
       context: context,
+      title: '重命名设备',
+      showClose: true,
+      maxWidth: 380,
       builder: (ctx) {
         final t = AppleTokens.of(ctx);
-        return AppleDialogShell(
-          title: '重命名设备',
-          showClose: true,
-          maxWidth: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: ctrl,
-                autofocus: true,
-                decoration: appleInputDecoration(t, hint: '设备名称'),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('取消'),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: appleInputDecoration(t, hint: '设备名称'),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: t.accent,
+                    foregroundColor: Colors.white,
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: t.accent,
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: () async {
-                      final next = ctrl.text.trim();
-                      if (next.isEmpty) {
-                        widget.store.showToast('设备名称不能为空', isError: true);
-                        return;
-                      }
-                      try {
-                        await widget.store.updateDevice(dev.id, name: next);
-                        if (ctx.mounted) Navigator.pop(ctx);
-                      } catch (e) {
-                        widget.store.showToast(e.toString(), isError: true);
-                      }
-                    },
-                    child: const Text('保存'),
-                  ),
-                ],
-              ),
-            ],
-          ),
+                  onPressed: () async {
+                    final next = ctrl.text.trim();
+                    if (next.isEmpty) {
+                      widget.store.showToast('设备名称不能为空', isError: true);
+                      return;
+                    }
+                    try {
+                      await widget.store.updateDevice(dev.id, name: next);
+                      if (ctx.mounted) Navigator.pop(ctx);
+                    } catch (e) {
+                      widget.store.showToast(e.toString(), isError: true);
+                    }
+                  },
+                  child: const Text('保存'),
+                ),
+              ],
+            ),
+          ],
         );
       },
     );
@@ -471,44 +462,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required String token,
     String? secret,
   }) async {
-    await showDialog<void>(
+    await showAppleAdaptiveModal<void>(
       context: context,
+      title: title,
+      showClose: true,
+      maxWidth: 440,
       builder: (ctx) {
         final t = AppleTokens.of(ctx);
-        return AppleDialogShell(
-          title: title,
-          maxWidth: 440,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _CopyBox(
+              label: 'Bearer Token',
+              value: token,
+              onCopied: () => widget.store.showToast('已复制 Token'),
+            ),
+            if (secret != null && secret.isNotEmpty) ...[
+              const SizedBox(height: 10),
               _CopyBox(
-                label: 'Bearer Token',
-                value: token,
-                onCopied: () => widget.store.showToast('已复制 Token'),
-              ),
-              if (secret != null && secret.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                _CopyBox(
-                  label: 'Webhook Secret',
-                  value: secret,
-                  onCopied: () => widget.store.showToast('已复制 Secret'),
-                ),
-              ],
-              const SizedBox(height: 16),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: t.accent,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('完成'),
-                ),
+                label: 'Webhook Secret',
+                value: secret,
+                onCopied: () => widget.store.showToast('已复制 Secret'),
               ),
             ],
-          ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                style: FilledButton.styleFrom(
+                  backgroundColor: t.accent,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('完成'),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -518,9 +508,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final res = await widget.store.createPairingCode();
       if (!mounted) return;
-      await showDialog<void>(
+      await showAppleAdaptiveModal<void>(
         context: context,
-        builder: (_) => _PairingCodeDialog(
+        title: '设备配对码',
+        showClose: true,
+        maxWidth: 360,
+        padding: const EdgeInsets.all(24),
+        builder: (_) => _PairingCodeContent(
           code: res.code,
           expiresAt: res.expiresAt,
           onCopied: () => widget.store.showToast('已复制配对码'),
@@ -542,327 +536,344 @@ class _SettingsScreenState extends State<SettingsScreen> {
       children: [
         const AppleTopBar(title: '设置'),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 36),
-            children: [
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 720),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // 1. Gateway Connection
-                      Row(
-                        children: [
-                          const _SectionTitle('网关连接'),
-                          const Spacer(),
-                          _GatewayStatusPill(status: store.connectionStatus),
-                        ],
-                      ),
-                      AppleCardGroup(
-                        padding: const EdgeInsets.all(16),
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: AppleSegmentedControl<bool>(
-                                  value: _pairMode,
-                                  options: const [
-                                    (value: false, label: 'Master Key / Token'),
-                                    (value: true, label: '6 位配对码'),
-                                  ],
-                                  onChanged: (v) =>
-                                      setState(() => _pairMode = v),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _urlCtrl,
-                                onChanged: (_) => _dirtyGateway = true,
-                                decoration: appleInputDecoration(
-                                  t,
-                                  hint: '网关地址（如 http://127.0.0.1:8080）',
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              if (!_pairMode)
-                                TextField(
-                                  controller: _tokenCtrl,
-                                  obscureText: true,
-                                  onChanged: (_) => _dirtyGateway = true,
-                                  decoration: appleInputDecoration(
-                                    t,
-                                    hint: 'Master Key 或设备 Token',
+          child: RefreshIndicator(
+            color: t.accent,
+            onRefresh: store.refreshAll,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 36),
+              children: [
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // 1. Gateway Connection
+                        Row(
+                          children: [
+                            const _SectionTitle('网关连接'),
+                            const Spacer(),
+                            _GatewayStatusPill(status: store.connectionStatus),
+                          ],
+                        ),
+                        AppleCardGroup(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: AppleSegmentedControl<bool>(
+                                    value: _pairMode,
+                                    options: const [
+                                      (value: false, label: 'Token'),
+                                      (value: true, label: '配对码'),
+                                    ],
+                                    onChanged: (v) =>
+                                        setState(() => _pairMode = v),
                                   ),
-                                )
-                              else
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _pairCodeCtrl,
-                                        decoration: appleInputDecoration(
-                                          t,
-                                          hint: '6 位配对码',
-                                        ),
-                                      ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _urlCtrl,
+                                  onChanged: (_) => _dirtyGateway = true,
+                                  decoration:
+                                      appleInputDecoration(t, hint: '网关地址'),
+                                ),
+                                const SizedBox(height: 10),
+                                if (!_pairMode)
+                                  TextField(
+                                    controller: _tokenCtrl,
+                                    obscureText: true,
+                                    onChanged: (_) => _dirtyGateway = true,
+                                    decoration: appleInputDecoration(
+                                      t,
+                                      hint: 'Master Key / Token',
                                     ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _deviceNameCtrl,
-                                        decoration: appleInputDecoration(
-                                          t,
-                                          hint: '设备名称',
+                                  )
+                                else
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _pairCodeCtrl,
+                                          decoration: appleInputDecoration(
+                                            t,
+                                            hint: '6 位配对码',
+                                          ),
                                         ),
                                       ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _deviceNameCtrl,
+                                          decoration: appleInputDecoration(
+                                            t,
+                                            hint: '设备名称',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    if (hasGateway) ...[
+                                      AppleIconButton(
+                                        icon: AppIconName.disconnect,
+                                        tooltip: '断开网关',
+                                        danger: true,
+                                        onPressed: _disconnectGateway,
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    FilledButton(
+                                      onPressed: _busy ? null : _connect,
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: t.accent,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      child: Text(_busy ? '连接中…' : '连接'),
                                     ),
                                   ],
                                 ),
-                              const SizedBox(height: 12),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 22),
+
+                        // 2. Reception Policy & Permissions
+                        const _SectionTitle('接收策略与权限'),
+                        AppleCardGroup(
+                          dividerIndent: 16,
+                          children: store.platform.supportsKeepAlive
+                              ? _buildAndroidReceptionChildren(t, store)
+                              : _buildWebReceptionChildren(t, store),
+                        ),
+                        const SizedBox(height: 22),
+
+                        // 3. Sources
+                        Row(
+                          children: [
+                            const _SectionTitle('消息来源'),
+                            const Spacer(),
+                            AppleIconButton(
+                              icon: AppIconName.plus,
+                              tooltip: '新建来源',
+                              onPressed: () => _openSourceEditorDialog(),
+                            ),
+                          ],
+                        ),
+                        AppleCardGroup(
+                          dividerIndent: 16,
+                          children: store.sources.isEmpty
+                              ? [
+                                  Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Text(
+                                      '暂无来源',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: t.inkTertiary,
+                                      ),
+                                    ),
+                                  ),
+                                ]
+                              : [
+                                  for (final src in store.sources)
+                                    _buildSourceRow(t, store, src),
+                                ],
+                        ),
+                        const SizedBox(height: 22),
+
+                        // 4. Devices
+                        Row(
+                          children: [
+                            const _SectionTitle('已绑定设备'),
+                            const Spacer(),
+                            AppleIconButton(
+                              icon: AppIconName.qrCode,
+                              tooltip: '生成配对码',
+                              onPressed: _openPairingCodeModal,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        AppleCardGroup(
+                          dividerIndent: 16,
+                          children: store.devices.isEmpty
+                              ? [
+                                  Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Text(
+                                      '暂无绑定设备',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: t.inkTertiary,
+                                      ),
+                                    ),
+                                  ),
+                                ]
+                              : [
+                                  for (final dev in store.devices)
+                                    _buildDeviceRow(t, store, dev),
+                                ],
+                        ),
+                        const SizedBox(height: 22),
+
+                        // 5. Policy & Appearance
+                        const _SectionTitle('策略与外观'),
+                        AppleCardGroup(
+                          dividerIndent: 16,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
+                              ),
+                              child: Row(
                                 children: [
-                                  if (hasGateway) ...[
-                                    AppleActionChip(
-                                      icon: AppIconName.disconnect,
-                                      label: '断开',
-                                      onPressed: _disconnectGateway,
+                                  Text(
+                                    '外观',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: t.inkPrimary,
                                     ),
-                                    const SizedBox(width: 8),
-                                  ],
-                                  FilledButton(
-                                    onPressed: _busy ? null : _connect,
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: t.accent,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    child: Text(_busy ? '连接中…' : '连接'),
+                                  ),
+                                  const Spacer(),
+                                  AppleSegmentedControl<ThemePreference>(
+                                    value: store.themePreference,
+                                    options: const [
+                                      (
+                                        value: ThemePreference.system,
+                                        label: '系统'
+                                      ),
+                                      (
+                                        value: ThemePreference.light,
+                                        label: '浅色'
+                                      ),
+                                      (
+                                        value: ThemePreference.dark,
+                                        label: '深色'
+                                      ),
+                                    ],
+                                    onChanged: store.setThemePreference,
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 22),
-
-                      // 2. Reception Policy & Permissions
-                      const _SectionTitle('接收策略与权限'),
-                      AppleCardGroup(
-                        children: store.platform.supportsKeepAlive
-                            ? _buildAndroidReceptionChildren(t, store)
-                            : _buildWebReceptionChildren(t, store),
-                      ),
-                      const SizedBox(height: 22),
-
-                      // 3. Sources
-                      Row(
-                        children: [
-                          const _SectionTitle('消息来源'),
-                          const Spacer(),
-                          AppleIconButton(
-                            icon: AppIconName.plus,
-                            tooltip: '新建来源',
-                            onPressed: () => _openSourceEditorDialog(),
-                          ),
-                        ],
-                      ),
-                      AppleCardGroup(
-                        children: store.sources.isEmpty
-                            ? [
-                                Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Text(
-                                    '暂无来源',
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
+                              ),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    '免打扰时段',
                                     style: TextStyle(
-                                      fontSize: 13,
-                                      color: t.inkTertiary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: t.inkPrimary,
                                     ),
                                   ),
-                                ),
-                              ]
-                            : [
-                                for (final src in store.sources)
-                                  _buildSourceRow(t, store, src),
-                              ],
-                      ),
-                      const SizedBox(height: 22),
-
-                      // 4. Devices
-                      Row(
-                        children: [
-                          const _SectionTitle('已绑定设备'),
-                          const Spacer(),
-                          AppleActionChip(
-                            icon: AppIconName.plus,
-                            label: '生成配对码',
-                            onPressed: _openPairingCodeModal,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      AppleCardGroup(
-                        children: store.devices.isEmpty
-                            ? [
-                                Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Text(
-                                    '暂无绑定设备',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: t.inkTertiary,
-                                    ),
+                                  const Spacer(),
+                                  AppleSwitch(
+                                    value: _dndEnabled,
+                                    semanticsLabel: '免打扰',
+                                    onChanged: (v) => setState(() {
+                                      _dirtyPolicy = true;
+                                      _dndEnabled = v;
+                                    }),
                                   ),
-                                ),
-                              ]
-                            : [
-                                for (final dev in store.devices)
-                                  _buildDeviceRow(t, store, dev),
-                              ],
-                      ),
-                      const SizedBox(height: 22),
-
-                      // 5. Policy & Appearance
-                      const _SectionTitle('策略与外观'),
-                      AppleCardGroup(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
+                                ],
+                              ),
                             ),
-                            child: Row(
-                              children: [
-                                Text(
-                                  '外观',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: t.inkPrimary,
-                                  ),
-                                ),
-                                const Spacer(),
-                                AppleSegmentedControl<ThemePreference>(
-                                  value: store.themePreference,
-                                  options: const [
-                                    (value: ThemePreference.system, label: '系统'),
-                                    (value: ThemePreference.light, label: '浅色'),
-                                    (value: ThemePreference.dark, label: '深色'),
-                                  ],
-                                  onChanged: store.setThemePreference,
-                                ),
-                              ],
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            child: Row(
-                              children: [
-                                Text(
-                                  '免打扰时段',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: t.inkPrimary,
-                                  ),
-                                ),
-                                const Spacer(),
-                                AppleSwitch(
-                                  value: _dndEnabled,
-                                  semanticsLabel: '免打扰',
-                                  onChanged: (v) => setState(() {
-                                    _dirtyPolicy = true;
-                                    _dndEnabled = v;
-                                  }),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _dndStartCtrl,
-                                        onChanged: (_) => _dirtyPolicy = true,
-                                        decoration: appleInputDecoration(
-                                          t,
-                                          hint: '开始（23:00）',
+                            Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _dndStartCtrl,
+                                          onChanged: (_) => _dirtyPolicy = true,
+                                          decoration: appleInputDecoration(
+                                            t,
+                                            hint: '开始',
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _dndEndCtrl,
-                                        onChanged: (_) => _dirtyPolicy = true,
-                                        decoration: appleInputDecoration(
-                                          t,
-                                          hint: '结束（07:00）',
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _dndEndCtrl,
+                                          onChanged: (_) => _dirtyPolicy = true,
+                                          decoration: appleInputDecoration(
+                                            t,
+                                            hint: '结束',
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _snoozeCtrl,
-                                        keyboardType: TextInputType.number,
-                                        onChanged: (_) => _dirtyPolicy = true,
-                                        decoration: appleInputDecoration(
-                                          t,
-                                          hint: '默认贪睡（分钟）',
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _retentionCtrl,
-                                        keyboardType: TextInputType.number,
-                                        onChanged: (_) => _dirtyPolicy = true,
-                                        decoration: appleInputDecoration(
-                                          t,
-                                          hint: '消息保留（天）',
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: FilledButton(
-                                    onPressed: _savePolicy,
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: t.accent,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    child: const Text('保存策略'),
+                                    ],
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _snoozeCtrl,
+                                          keyboardType: TextInputType.number,
+                                          onChanged: (_) => _dirtyPolicy = true,
+                                          decoration: appleInputDecoration(
+                                            t,
+                                            hint: '默认贪睡',
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _retentionCtrl,
+                                          keyboardType: TextInputType.number,
+                                          onChanged: (_) => _dirtyPolicy = true,
+                                          decoration: appleInputDecoration(
+                                            t,
+                                            hint: '保留天数',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: FilledButton(
+                                      onPressed: _savePolicy,
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: t.accent,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      child: const Text('保存'),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
@@ -963,6 +974,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
               store.showToast(e.toString(), isError: true);
             }
           },
+        ),
+      if (store.supportsAutoStartSettings)
+        ApplePressable(
+          onTap: () async {
+            try {
+              await store.requestPermission('auto_start');
+            } catch (e) {
+              store.showToast(e.toString(), isError: true);
+            }
+          },
+          pressedScale: 0.99,
+          builder: (context, hovered, pressed) => Container(
+            color: pressed
+                ? t.bgPressed
+                : hovered
+                    ? t.bgHover
+                    : Colors.transparent,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                AppIcon(
+                  AppIconName.rocket,
+                  size: 15,
+                  color: t.accent,
+                  semanticsLabel: '后台自启动',
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '后台自启动',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500,
+                      color: t.inkPrimary,
+                    ),
+                  ),
+                ),
+                AppIcon(
+                  AppIconName.chevronRight,
+                  size: 15,
+                  color: t.inkTertiary,
+                  semanticsLabel: '前往后台自启动设置',
+                ),
+              ],
+            ),
+          ),
         ),
     ];
   }
@@ -1295,23 +1352,60 @@ class _PermissionRow extends StatelessWidget {
             child: Text(
               label,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 13.5,
                 fontWeight: FontWeight.w500,
                 color: t.inkPrimary,
               ),
             ),
           ),
           if (granted)
-            ApplePill(
-              label: '已授权',
-              background: t.successBg,
-              foreground: t.success,
+            Tooltip(
+              message: '已授权',
+              child: AppIcon(
+                AppIconName.checkCircle,
+                size: 18,
+                color: t.success,
+                semanticsLabel: '$label已授权',
+              ),
             )
           else
-            AppleActionChip(
-              icon: AppIconName.shield,
-              label: '授权',
-              onPressed: onRequest,
+            Tooltip(
+              message: '授权 $label',
+              child: ApplePressable(
+                onTap: onRequest,
+                pressedScale: 0.94,
+                builder: (context, hovered, pressed) => AnimatedContainer(
+                  duration: AppleTokens.motionFast,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: pressed
+                        ? t.bgPressed
+                        : hovered
+                            ? t.bgSelected
+                            : t.warningBg,
+                    borderRadius: BorderRadius.circular(AppleTokens.radiusSm),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AppIcon(
+                        AppIconName.shield,
+                        size: 14,
+                        color: hovered ? t.accent : t.warning,
+                        semanticsLabel: '授权 $label',
+                      ),
+                      const SizedBox(width: 2),
+                      AppIcon(
+                        AppIconName.chevronRight,
+                        size: 13,
+                        color: hovered ? t.accent : t.warning,
+                        semanticsLabel: '前往授权',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
         ],
       ),
@@ -1330,7 +1424,11 @@ class _GatewayStatusPill extends StatelessWidget {
       ConnectionStatus.connected => ('已连接', t.successBg, t.success),
       ConnectionStatus.reconnecting => ('重连中', t.warningBg, t.warning),
       ConnectionStatus.offline => ('离线', t.criticalBg, t.critical),
-      ConnectionStatus.unconfigured => ('未配置', t.bgSurfaceSecondary, t.inkSecondary),
+      ConnectionStatus.unconfigured => (
+          '未配置',
+          t.bgSurfaceSecondary,
+          t.inkSecondary
+        ),
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -1415,8 +1513,8 @@ class _CopyBox extends StatelessWidget {
   }
 }
 
-class _PairingCodeDialog extends StatefulWidget {
-  const _PairingCodeDialog({
+class _PairingCodeContent extends StatefulWidget {
+  const _PairingCodeContent({
     required this.code,
     required this.expiresAt,
     required this.onCopied,
@@ -1427,10 +1525,10 @@ class _PairingCodeDialog extends StatefulWidget {
   final VoidCallback onCopied;
 
   @override
-  State<_PairingCodeDialog> createState() => _PairingCodeDialogState();
+  State<_PairingCodeContent> createState() => _PairingCodeContentState();
 }
 
-class _PairingCodeDialogState extends State<_PairingCodeDialog> {
+class _PairingCodeContentState extends State<_PairingCodeContent> {
   Timer? _timer;
   int _remaining = 300;
 
@@ -1459,51 +1557,46 @@ class _PairingCodeDialogState extends State<_PairingCodeDialog> {
     final t = AppleTokens.of(context);
     final mins = _remaining ~/ 60;
     final secs = _remaining % 60;
-    return AppleDialogShell(
-      title: '设备配对码',
-      maxWidth: 360,
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            widget.code,
-            style: AppleTokens.tabular.copyWith(
-              fontSize: 34,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 6,
-              color: t.accent,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          widget.code,
+          style: AppleTokens.tabular.copyWith(
+            fontSize: 34,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 6,
+            color: t.accent,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}',
+          style: AppleTokens.tabular.copyWith(
+            fontSize: 13,
+            color: t.inkSecondary,
+          ),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppleActionChip(
+              icon: AppIconName.copy,
+              label: '复制',
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: widget.code));
+                widget.onCopied();
+              },
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}',
-            style: AppleTokens.tabular.copyWith(
-              fontSize: 13,
-              color: t.inkSecondary,
+            const SizedBox(width: 8),
+            AppleActionChip(
+              label: '关闭',
+              onPressed: () => Navigator.pop(context),
             ),
-          ),
-          const SizedBox(height: 18),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppleActionChip(
-                icon: AppIconName.copy,
-                label: '复制',
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: widget.code));
-                  widget.onCopied();
-                },
-              ),
-              const SizedBox(width: 8),
-              AppleActionChip(
-                label: '关闭',
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-        ],
-      ),
+          ],
+        ),
+      ],
     );
   }
 }

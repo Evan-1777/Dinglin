@@ -38,6 +38,7 @@ class SyncEngine {
   int _lastSeq = 0;
   int _reconnectAttempt = 0;
   bool _stopped = false;
+  bool _pausedForBackground = false;
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _wsSub;
   Timer? _pingTimer;
@@ -127,6 +128,7 @@ class SyncEngine {
 
   Future<void> start() async {
     _stopped = false;
+    _pausedForBackground = false;
     if (api.baseUrl.isEmpty || api.token.isEmpty) {
       onStatusChanged(ConnectionStatus.unconfigured);
       return;
@@ -134,8 +136,17 @@ class SyncEngine {
     await _syncAndConnect();
   }
 
+  void pauseForBackground() {
+    if (_stopped || _pausedForBackground) return;
+    _pausedForBackground = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _disconnectWs();
+  }
+
   Future<void> resume() async {
     if (_stopped || api.baseUrl.isEmpty || api.token.isEmpty) return;
+    _pausedForBackground = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     try {
@@ -164,18 +175,20 @@ class SyncEngine {
   }
 
   Future<void> _syncAndConnect() async {
-    if (_stopped) return;
+    if (_stopped || _pausedForBackground) return;
     _disconnectWs();
     try {
       await syncOnce();
-      _connectWs();
+      if (!_stopped && !_pausedForBackground) {
+        _connectWs();
+      }
     } catch (_) {
       _scheduleReconnect();
     }
   }
 
   void _connectWs() {
-    if (_stopped) return;
+    if (_stopped || _pausedForBackground) return;
     final httpUri = Uri.parse(api.baseUrl);
     final wsScheme = httpUri.scheme == 'https' ? 'wss' : 'ws';
     final wsUri = httpUri.replace(
@@ -228,7 +241,7 @@ class SyncEngine {
   }
 
   void _scheduleReconnect() {
-    if (_stopped) return;
+    if (_stopped || _pausedForBackground) return;
     _disconnectWs();
     final idx = _reconnectAttempt < _backoffSeconds.length
         ? _reconnectAttempt

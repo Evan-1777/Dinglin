@@ -7,6 +7,7 @@ import 'screens/schedules_screen.dart';
 import 'screens/settings_screen.dart';
 import 'state/app_store.dart';
 import 'theme/apple_tokens.dart';
+import 'widgets/alarm_ringing_overlay.dart';
 import 'widgets/app_shell.dart';
 import 'widgets/notification_inspector.dart';
 import 'widgets/schedule_editor_modal.dart';
@@ -46,6 +47,9 @@ class _DinglinAppState extends State<DinglinApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _store.onAppResumed();
+    } else if (state == AppLifecycleState.paused &&
+        _store.platform.supportsKeepAlive) {
+      _store.onAppPaused();
     }
   }
 
@@ -102,23 +106,42 @@ class _WorkspaceHome extends StatelessWidget {
         store.activeTab == AppTab.inbox && selectedNotif != null
             ? NotificationInspector(store: store, notification: selectedNotif)
             : null;
+    final ringing = store.ringingAlarm;
 
-    return AppShell(
-      store: store,
-      body: body,
-      inspector: inspector,
-      onFocusSearch: () {
-        if (store.activeTab != AppTab.inbox) {
-          store.setTab(AppTab.inbox);
-        }
-        searchFocus.requestFocus();
-      },
-      onCreateSchedule: () {
-        showDialog<void>(
-          context: context,
-          builder: (_) => ScheduleEditorModal(store: store),
-        );
-      },
+    return Stack(
+      children: [
+        AppShell(
+          store: store,
+          body: body,
+          inspector: inspector,
+          onFocusSearch: () {
+            if (store.activeTab != AppTab.inbox) {
+              store.setTab(AppTab.inbox);
+            }
+            searchFocus.requestFocus();
+          },
+          onCreateSchedule: () {
+            showScheduleEditorModal(context, store: store);
+          },
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: ringing == null,
+            child: AnimatedSwitcher(
+              duration: AppleTokens.motion,
+              switchInCurve: AppleTokens.motionCurve,
+              switchOutCurve: AppleTokens.motionCurve,
+              child: ringing == null
+                  ? const SizedBox.shrink()
+                  : AlarmRingingOverlay(
+                      key: ValueKey(ringing.id),
+                      store: store,
+                      schedule: ringing,
+                    ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
